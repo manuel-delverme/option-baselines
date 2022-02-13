@@ -165,9 +165,11 @@ class O2C(OnPolicyAlgorithm):
 
         with torch.no_grad():
             # Compute value for the last timestep
-            action_values, option_values = self.policy.predict_values(obs_as_tensor(new_obs, self.device), options)
+            new_obs = obs_as_tensor(new_obs, self.device)
+            action_values, new_option_values = self.policy.predict_values(new_obs, options)
+            value_upon_arrival = termination_probs * new_option_values + (1 - termination_probs) * option_values
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_option_values=option_values)
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_option_values=value_upon_arrival)
 
         callback.on_rollout_end()
 
