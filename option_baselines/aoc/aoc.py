@@ -11,12 +11,12 @@ from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
 
-import option_baselines.o2c
-import option_baselines.o2c.policies
+import option_baselines.aoc
+import option_baselines.aoc.policies
 from option_baselines.common import buffers
 
 
-class O2C(OnPolicyAlgorithm):
+class AOC(OnPolicyAlgorithm):
     rollout_buffer: Union[buffers.OptionRolloutBuffer, buffers.DictOptionRolloutBuffer]
 
     def __init__(
@@ -47,7 +47,7 @@ class O2C(OnPolicyAlgorithm):
             _init_setup_model: bool = True,
     ):
 
-        super(O2C, self).__init__(
+        super(AOC, self).__init__(
             policy,
             env,
             learning_rate=learning_rate,
@@ -267,9 +267,9 @@ class O2C(OnPolicyAlgorithm):
             tb_log_name: str = "A2C",
             eval_log_path: Optional[str] = None,
             reset_num_timesteps: bool = True,
-    ) -> "O2C":
+    ) -> "AOC":
 
-        return super(O2C, self).learn(
+        return super(AOC, self).learn(
             total_timesteps=total_timesteps,
             callback=callback,
             log_interval=log_interval,
@@ -314,7 +314,7 @@ class O2C(OnPolicyAlgorithm):
         ).to(self.device)
 
         opt1 = policies[0]
-        terminations = option_baselines.o2c.policies.Termination(
+        terminations = option_baselines.aoc.policies.Termination(
             self.observation_space,
             self.action_space,
             net_arch=opt1.net_arch[0]["vf"],  # TODO(Manuel): make this configurable

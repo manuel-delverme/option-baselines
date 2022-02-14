@@ -1,1 +1,1 @@
-from option_baselines.o2c.aoc import O2C
+from option_baselines.aoc.aoc import AOC
