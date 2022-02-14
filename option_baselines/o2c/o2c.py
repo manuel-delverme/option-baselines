@@ -166,7 +166,7 @@ class O2C(OnPolicyAlgorithm):
             # Compute value for the last timestep
             new_obs = obs_as_tensor(new_obs, self.device)
             action_values, new_option_values = self.policy.predict_values(new_obs, options)
-            value_upon_arrival = termination_probs * new_option_values + (1 - termination_probs) * option_values
+            value_upon_arrival = torch.einsum("b,b->b", termination_probs, new_option_values) + torch.einsum("b,b->b", (1 - termination_probs), option_values)
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_option_values=value_upon_arrival)
 
@@ -374,6 +374,7 @@ class OptionNet(torch.nn.Module):
         executing_option = self.executing_option.clone()
 
         meta_actions, meta_values, meta_log_probs = self.meta_policy(observation)
+        meta_values = meta_values.squeeze(1)
 
         options_observation = self.options_preprocess(observation)
         option_terminates, termination_probs = self.terminations(options_observation, executing_option)
@@ -396,7 +397,8 @@ class OptionNet(torch.nn.Module):
             else:
                 option_observation = observation[option_mask]
 
-            actions[option_mask], values[option_mask], log_probs[option_mask] = option_net(option_observation)
+            act, val, log_prob = option_net(option_observation)
+            actions[option_mask], values[option_mask], log_probs[option_mask] = act, val.squeeze(1), log_prob
 
         return actions, values, log_probs, meta_actions, meta_values, meta_log_probs, termination_probs
 
@@ -416,7 +418,7 @@ class OptionNet(torch.nn.Module):
                 option_observation = observation[option_mask]
 
             action_values[option_mask] = policy.predict_values(option_observation).squeeze(1)
-        return action_values, option_values
+        return action_values, option_values.squeeze()
 
     def evaluate_actions(self, observation, options, actions):
         meta_values, meta_log_probs, meta_entropies = self.meta_policy.evaluate_actions(observation, options)
