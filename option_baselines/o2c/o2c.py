@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Type, Union
+from typing import Any, Dict, Optional, Type, Union, Tuple
 
 import gym
 import numpy as np
@@ -102,14 +102,13 @@ class O2C(OnPolicyAlgorithm):
         n_steps = 0
         rollout_buffer.reset()
         callback.on_rollout_start()
+        dones = self._last_episode_starts
 
         while n_steps < n_rollout_steps:
             with torch.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
-                actions, values, log_probs, options, option_values, option_log_probs, termination_probs = self.policy(
-                    obs_tensor
-                )
+                actions, values, log_probs, options, option_values, option_log_probs, termination_probs = self.policy(obs_tensor, dones)
             actions = actions.cpu().numpy()
 
             # Rescale and perform action
@@ -371,13 +370,14 @@ class OptionNet(torch.nn.Module):
         self.terminations.train(training_mode)
         self.meta_policy.train(training_mode)
 
-    def forward(self, observation):
+    def forward(self, observation, dones):
         executing_option = self.executing_option.clone()
-        # TODO(Manuel): option_terminates should be forced true at the beginning of the episode.
+
         meta_actions, meta_values, meta_log_probs = self.meta_policy(observation)
 
         options_observation = self.options_preprocess(observation)
         option_terminates, termination_probs = self.terminations(options_observation, executing_option)
+        option_terminates = dones | option_terminates
 
         self.executing_option[option_terminates] = meta_actions[option_terminates]
         actions, values, log_probs = (
