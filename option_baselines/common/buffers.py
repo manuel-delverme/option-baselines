@@ -19,7 +19,8 @@ class OptionsRolloutBufferSamples:
     returns: torch.Tensor
 
     # Option stuff
-    options: torch.Tensor
+    previous_options: torch.Tensor
+    current_options: torch.Tensor
     option_values: torch.Tensor
     option_advantages: torch.Tensor
     option_returns: torch.Tensor
@@ -41,14 +42,15 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
     def __init__(self, *args, **kwargs):
         # TODO: rename option to meta
         self._tensor_names = [
-            "options",
+            "current_options",
+            "previous_options",
             "option_log_probs",
-            # "termination_probs",
             "option_values",
             "option_advantages",
             "option_returns",
         ]
-        self.options = None
+        self.previous_options = None
+        self.current_options = None
         self.option_values = None
         self.option_log_probs = None
         # self.termination_probs = None
@@ -58,7 +60,8 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         super().__init__(*args, **kwargs)
 
     def reset(self):
-        self.options = np.zeros((self.buffer_size, self.n_envs), dtype=np.int64)
+        self.current_options = np.zeros((self.buffer_size, self.n_envs), dtype=np.int64)
+        self.previous_options = np.zeros((self.buffer_size, self.n_envs), dtype=np.int64)
         self.option_values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.option_log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         # self.termination_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
@@ -69,7 +72,8 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         samples = super(DictOptionRolloutBuffer, self)._get_samples(batch_inds, env)
         return DictOptionRolloutBufferSamples(
             *samples,
-            options=self.to_torch(self.options[batch_inds]),
+            previous_options=self.to_torch(self.current_options[batch_inds]),
+            current_options=self.to_torch(self.previous_options[batch_inds]),
             option_values=self.to_torch(self.option_values[batch_inds]),
             option_log_probs=self.to_torch(self.option_log_probs[batch_inds]),
             option_advantages=self.to_torch(self.option_advantages[batch_inds]),
@@ -85,24 +89,24 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
             episode_start: np.ndarray,
             value: torch.Tensor,
             log_prob: torch.Tensor,
-            option: Optional[np.ndarray] = None,
+            previous_option: Optional[torch.Tensor] = None,
+            current_option: Optional[torch.Tensor] = None,
             option_value: Optional[torch.Tensor] = None,
             option_log_prob: Optional[torch.Tensor] = None,
             termination_prob: Optional[torch.Tensor] = None,
     ) -> None:
-        option = np.full_like(self.options[self.pos], np.nan) if option is None else option
+        previous_option = torch.full_like(self.previous_options[self.pos], np.nan) if previous_option is None else previous_option
+        current_option = torch.full_like(self.current_options[self.pos], np.nan) if current_option is None else current_option
         option_value = torch.full(self.option_values[self.pos].shape, torch.nan) if option_value is None else option_value
         option_log_prob = (
             torch.full(self.option_log_probs[self.pos].shape, torch.nan) if option_log_prob is None else option_log_prob
         )
-        termination_prob = (
-            torch.full(self.termination_probs[self.pos].shape, torch.nan) if termination_prob is None else termination_prob
-        )
-
         assert len(option_log_prob.shape) > 0, "option_log_prob can not be 0d"
         assert len(log_prob.shape) > 0, "log_prob2 can not be 0d"
 
-        self.options[self.pos] = np.array(option).copy()
+        self.previous_options[self.pos] = previous_option.numpy().copy()
+        self.current_options[self.pos] = current_option.numpy().copy()
+
         self.option_values[self.pos] = option_value.clone().cpu().numpy().flatten()
         self.option_log_probs[self.pos] = option_log_prob.clone().cpu().numpy().squeeze()
         # self.termination_probs[self.pos] = termination_prob.clone().cpu().numpy().squeeze()
@@ -140,7 +144,7 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
             last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
             self.option_advantages[step] = last_gae_lam
 
-        for option_idx in np.unique(self.options):
-            option_ind = self.options == option_idx
+        for option_idx in np.unique(self.current_options):
+            option_ind = self.current_options == option_idx
             self.option_advantages[option_ind] = self.returns[option_ind] - self.option_values[option_ind]
         self.option_returns = self.option_advantages + self.option_values

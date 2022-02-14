@@ -78,6 +78,7 @@ class O2C(OnPolicyAlgorithm):
         self.switching_margin = switching_margin
         self.normalize_advantage = normalize_advantage
         self.num_options = num_options
+        self._last_options = torch.full(size=(env.num_envs,), fill_value=np.nan)
 
         # Update optimizer inside the policy if we want to use RMSProp
         # (original implementation) rather than Adam
@@ -153,13 +154,15 @@ class O2C(OnPolicyAlgorithm):
                 self._last_episode_starts,
                 values,
                 log_probs,
-                option=options,
+                current_option=options,
+                previous_option=self._last_options,
                 option_value=option_values,
                 option_log_prob=option_log_probs,
                 termination_prob=termination_probs,
             )
 
             self._last_obs = new_obs
+            self._last_options = options
             self._last_episode_starts = dones
 
         with torch.no_grad():
@@ -187,21 +190,17 @@ class O2C(OnPolicyAlgorithm):
 
         # This will only loop once (get all data in one go)
         for rollout_data in self.rollout_buffer.get(batch_size=None):
-
             actions = rollout_data.actions
             if isinstance(self.action_space, gym.spaces.Discrete):
                 # Convert discrete action from float to long
                 actions = actions.long().flatten()
 
-            options = rollout_data.options.squeeze(1)
+            previous_options = rollout_data.current_options.squeeze(1)
+            current_options = rollout_data.previous_options.squeeze(1)
             observations = rollout_data.observations
 
-            (meta_values, meta_log_prob, meta_entropy), (
-                action_values,
-                action_log_prob,
-                entropy,
-            ) = self.policy.evaluate_actions(observations, options, actions)
-            _, termination_probs = self.policy.terminations(observations, options)
+            (meta_values, meta_log_prob, meta_entropy), (action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(observations, current_options, actions)
+            _, termination_probs = self.policy.terminations(observations, previous_options)
             action_values, meta_values = action_values.flatten(), meta_values.flatten()
 
             # Normalize advantage (not present in the original implementation)
@@ -219,8 +218,6 @@ class O2C(OnPolicyAlgorithm):
 
             value_loss = F.mse_loss(rollout_data.returns, action_values)
             value_loss += F.mse_loss(rollout_data.option_returns.squeeze(1), meta_values)
-
-            # # term_loss = termination_prob.norm()
 
             # Entropy loss favor exploration, approximate entropy when no analytical form
             entropy_loss = -torch.mean(-action_log_prob) if entropy is None else -torch.mean(entropy)
@@ -442,6 +439,29 @@ class OptionNet(torch.nn.Module):
             log_probs[option_mask] = distribution.log_prob(actions[option_mask])
 
         return (meta_values, meta_log_probs, meta_entropies), (values, log_probs, entropies)
+
+    def predict(
+            self,
+            observation: np.ndarray,
+            state: Optional[Tuple[np.ndarray, ...]] = None,
+            episode_start: Optional[np.ndarray] = None,
+            deterministic: bool = False,
+    ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
+        """
+        Get the policy action from an observation (and optional hidden state).
+        Includes sugar-coating to handle different observations (e.g. normalizing images).
+
+        :param observation: the input observation
+        :param state: The last hidden states (can be None, used in recurrent policies)
+        :param episode_start: The last masks (can be None, used in recurrent policies)
+            this correspond to beginning of episodes,
+            where the hidden states of the RNN must be reset.
+        :param deterministic: Whether or not to return deterministic actions.
+        :return: the model's action and the next hidden state
+            (used in recurrent policies)
+        """
+        # return self.policy.predict(observation, state, episode_start, deterministic)
+        raise NotImplementedError
 
 
 def get_option_mask(observation: torch.Tensor, option: torch.Tensor, option_idx: int) -> (torch.Tensor, torch.Tensor):
