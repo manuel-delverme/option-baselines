@@ -21,7 +21,6 @@ class OptionRollout(callbacks.EvalCallback):
             best_model_save_path: Optional[str] = None,
             deterministic: bool = True,
 
-
     ):
         super(OptionRollout, self).__init__(eval_env, callback_on_new_best, n_eval_episodes, eval_freq, log_path, best_model_save_path, deterministic)
         self.option_frames = collections.defaultdict(list)
@@ -44,7 +43,7 @@ class OptionRollout(callbacks.EvalCallback):
         )
         for k, frames in self.option_frames.items():
             video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option_rollout_{k}"
-            recorder = video_recorder.VideoRecorder(env=self.eval_env, base_path=video_path)
+            recorder = video_recorder.VideoRecorder(env=self.eval_env, base_path=video_path, metadata=self.eval_env.unwrapped.metadata)
             for frame in frames:
                 recorder._encode_image_frame(frame)
             recorder.close()
