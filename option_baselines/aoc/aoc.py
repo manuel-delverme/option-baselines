@@ -350,7 +350,7 @@ class OptionNet(torch.nn.Module):
         del self.meta_policy.optimizer
 
         self.num_options = len(self.policies)
-        self.executing_option = torch.randint(0, self.num_options, (num_agents,))
+        self.executing_option = torch.full((num_agents,), torch.iinfo(torch.long).max, dtype=torch.long)
 
     def set_training_mode(self, training_mode):
         self.policies.train(training_mode)
@@ -358,13 +358,11 @@ class OptionNet(torch.nn.Module):
         self.meta_policy.train(training_mode)
 
     def forward(self, observation, dones):
-        executing_option = self.executing_option.clone()
-
         meta_actions, meta_values, meta_log_probs = self.meta_policy(observation)
         meta_values = meta_values.squeeze(1)
 
         options_observation = self.options_preprocess(observation)
-        option_terminates, termination_probs = self.terminations(options_observation, executing_option)
+        option_terminates, termination_probs = self.terminations(options_observation, self.executing_option)
         option_terminates = dones | option_terminates
 
         self.executing_option[option_terminates] = meta_actions[option_terminates]
@@ -375,7 +373,7 @@ class OptionNet(torch.nn.Module):
         )
 
         for option_idx, option_net in enumerate(self.policies):
-            option_mask = executing_option == option_idx
+            option_mask = self.executing_option == option_idx
             if not option_mask.any():
                 continue
 
