@@ -450,8 +450,36 @@ class OptionNet(torch.nn.Module):
         :return: the model's action and the next hidden state
             (used in recurrent policies)
         """
-        # return self.policy.predict(observation, state, episode_start, deterministic)
-        raise NotImplementedError
+        self.set_training_mode(False)
+        meta_actions, _states = self.meta_policy.predict(observation, state, episode_start, deterministic)
+        observation = obs_as_tensor(observation, self.meta_policy.device)
+
+        if state is None:
+            executing_option = meta_actions
+        else:
+            executing_option = state
+            options_observation = self.options_preprocess(observation)
+            option_terminates, termination_probs = self.terminations(options_observation, executing_option)
+            option_terminates = episode_start | option_terminates
+            executing_option[option_terminates] = meta_actions[option_terminates]
+
+        actions = torch.empty_like(torch.tensor(meta_actions))
+        for option_idx, option_net in enumerate(self.policies):
+            option_mask = executing_option == option_idx
+            if not option_mask.any():
+                continue
+
+            if isinstance(observation, dict):
+                option_observation = {k: observation[k][option_mask] for k, v in observation.items()}
+            else:
+                option_observation = observation[option_mask]
+
+            act, val, log_prob = option_net(option_observation)
+            actions[option_mask] = act
+
+        # Convert to numpy
+        actions = actions.cpu().numpy()
+        return actions, executing_option
 
 
 def get_option_mask(observation: torch.Tensor, option: torch.Tensor, option_idx: int) -> (torch.Tensor, torch.Tensor):
