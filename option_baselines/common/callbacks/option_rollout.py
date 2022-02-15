@@ -24,7 +24,7 @@ class OptionRollout(callbacks.EvalCallback):
     ):
         super(OptionRollout, self).__init__(eval_env, callback_on_new_best, n_eval_episodes, eval_freq, log_path, best_model_save_path, deterministic)
         self.option_frames = collections.defaultdict(list)
-        self.last_log = 0
+        self.last_log = self.eval_freq
 
     def _on_step(self) -> bool:
         if (self.num_timesteps - self.last_log) <= self.eval_freq:

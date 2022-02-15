@@ -88,6 +88,12 @@ class AOC(OnPolicyAlgorithm):
             self.policy_kwargs["optimizer_class"] = torch.optim.RMSprop
             self.policy_kwargs["optimizer_kwargs"] = dict(alpha=0.99, eps=rms_prop_eps, weight_decay=0)
 
+        self.buffer_cls = (
+            buffers.DictOptionRolloutBuffer
+            if isinstance(self.observation_space, gym.spaces.Dict)
+            else buffers.OptionRolloutBuffer
+        )
+
         if _init_setup_model:
             self._setup_model()
 
@@ -281,13 +287,7 @@ class AOC(OnPolicyAlgorithm):
         self._setup_lr_schedule()
         self.set_random_seed(self.seed)
 
-        buffer_cls = (
-            buffers.DictOptionRolloutBuffer
-            if isinstance(self.observation_space, gym.spaces.Dict)
-            else buffers.OptionRolloutBuffer
-        )
-
-        self.rollout_buffer: buffers.DictOptionRolloutBuffer = buffer_cls(  # TODO(Manuel) actually this should be OptionRolloutBuffer
+        self.rollout_buffer: buffers.DictOptionRolloutBuffer = self.buffer_cls(  # TODO(Manuel) actually this should be OptionRolloutBuffer
             self.n_steps,
             self.observation_space,
             self.action_space,
