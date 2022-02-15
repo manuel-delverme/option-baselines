@@ -20,14 +20,18 @@ class OptionRollout(callbacks.EvalCallback):
             log_path: Optional[str] = None,
             best_model_save_path: Optional[str] = None,
             deterministic: bool = True,
-            render: bool = False,
-            verbose: int = 1,
-            warn: bool = True,
+
+
     ):
-        super(OptionRollout, self).__init__(eval_env, callback_on_new_best, n_eval_episodes, eval_freq, log_path, best_model_save_path, deterministic, render, verbose, warn)
+        super(OptionRollout, self).__init__(eval_env, callback_on_new_best, n_eval_episodes, eval_freq, log_path, best_model_save_path, deterministic)
         self.option_frames = collections.defaultdict(list)
+        self.last_log = 0
 
     def _on_step(self) -> bool:
+        if (self.num_timesteps - self.last_log) <= self.eval_freq:
+            return True
+
+        self.last_log = self.num_timesteps
         stable_baselines3.common.evaluation.evaluate_policy(
             self.model,
             self.eval_env,
@@ -35,11 +39,12 @@ class OptionRollout(callbacks.EvalCallback):
             render=False,
             deterministic=self.deterministic,
             return_episode_rewards=False,
-            warn=self.warn,
+            warn=False,
             callback=self._log_options_callback,
         )
         for k, frames in self.option_frames.items():
-            recorder = video_recorder.VideoRecorder(env=self.eval_env, base_path=self.eval_env.video_folder + f"/option_rollout_{k}")
+            video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option_rollout_{k}"
+            recorder = video_recorder.VideoRecorder(env=self.eval_env, base_path=video_path)
             for frame in frames:
                 recorder._encode_image_frame(frame)
             recorder.close()
