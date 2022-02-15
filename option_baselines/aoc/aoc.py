@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Type, Union, Tuple
+from typing import Any, Dict, Optional, Type, Union, Tuple, Callable
 
 import gym
 import numpy as np
@@ -44,6 +44,7 @@ class AOC(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
+            option_preprocess: Optional[Callable[[torch.Tensor], torch.Tensor]] = lambda x: x,
             _init_setup_model: bool = True,
     ):
 
@@ -78,6 +79,7 @@ class AOC(OnPolicyAlgorithm):
         self.switching_margin = switching_margin
         self.normalize_advantage = normalize_advantage
         self.num_options = num_options
+        self.option_preprocess = option_preprocess
         self._last_options = torch.full(size=(env.num_envs,), fill_value=np.nan)
 
         # Update optimizer inside the policy if we want to use RMSProp
@@ -250,12 +252,6 @@ class AOC(OnPolicyAlgorithm):
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
 
-        for k, v in rollout_data.__dict__.items():
-            if "executing_option" in k:
-                continue
-            if isinstance(v, torch.Tensor):
-                self.logger.record("rollout/" + k, v.float().mean().item())
-
     def learn(
             self,
             total_timesteps: int,
@@ -325,7 +321,7 @@ class AOC(OnPolicyAlgorithm):
             num_options=self.num_options,
         ).to(self.device)
         self.policy = OptionNet(
-            policies, meta_policy, terminations, self.lr_schedule, num_agents=self.n_envs, **self.policy_kwargs
+            policies, meta_policy, terminations, self.lr_schedule, num_agents=self.n_envs, **self.policy_kwargs, option_preprocess=self.option_preprocess,
         )
 
 
@@ -339,6 +335,7 @@ class OptionNet(torch.nn.Module):
             optimizer_class,
             optimizer_kwargs,
             num_agents,
+            option_preprocess,
     ):
         super(OptionNet, self).__init__()
         self.policies = policies
@@ -346,14 +343,7 @@ class OptionNet(torch.nn.Module):
         self.terminations = termination
         self.optimizer = optimizer_class(self.parameters(), lr(0), **optimizer_kwargs)
 
-        # self.forward = self.policies[0].forward
-        # self.predict_values = self.policies[0].predict_values
-        # self.evaluate_actions = self.policies[0].evaluate_actions
-        def options_preprocess(x):
-            x["task"].fill_(0)  # Options are not aware of tasks.
-            return x
-
-        self.options_preprocess = options_preprocess
+        self.options_preprocess = option_preprocess
 
         for p in self.policies:
             del p.optimizer
