@@ -233,10 +233,10 @@ class AOC(OnPolicyAlgorithm):
 
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
 
-            term_loss = -((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
-            # term_loss += self.term_coef * termination_prob.norm()
+            termination_loss = -((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
+            termination_loss += self.term_coef * termination_probs.norm()
 
-            loss = policy_loss + self.vf_coef * value_loss + self.ent_coef * entropy_loss + term_loss
+            loss = policy_loss + self.vf_coef * value_loss + self.ent_coef * entropy_loss + termination_loss
 
             # Optimization step
             self.policy.optimizer.zero_grad()
@@ -251,7 +251,8 @@ class AOC(OnPolicyAlgorithm):
         self._n_updates += 1
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/explained_variance", explained_var)
-        # self.logger.record("train/entropy_loss", entropy_loss.item())
+        self.logger.record("train/entropy_loss", entropy_loss.item())
+        self.logger.record("train/termination_loss", termination_loss.item())
         self.logger.record("train/grad_norm", grad_norm)
         self.logger.record("train/policy_loss", policy_loss.item())
         self.logger.record("train/value_loss", value_loss.item())
