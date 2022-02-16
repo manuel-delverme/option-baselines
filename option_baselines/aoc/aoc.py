@@ -21,6 +21,7 @@ class AOC(OnPolicyAlgorithm):
 
     def __init__(
             self,
+            meta_policy: Union[str, Type[ActorCriticPolicy]],
             policy: Union[str, Type[ActorCriticPolicy]],
             env: Union[GymEnv, str],
             num_options: int,
@@ -74,6 +75,7 @@ class AOC(OnPolicyAlgorithm):
                 gym.spaces.MultiBinary,
             ),
         )
+        self.meta_policy_class = meta_policy
 
         self.term_coef = term_coef
         self.switching_margin = switching_margin
@@ -306,15 +308,20 @@ class AOC(OnPolicyAlgorithm):
             )
 
         option_space = gym.spaces.Discrete(self.num_options)
-        meta_policy = self.policy_class(
+        meta_policy = self.meta_policy_class(
             self.observation_space, option_space, self.lr_schedule, use_sde=self.use_sde, **self.policy_kwargs
         ).to(self.device)
 
         opt1 = policies[0]
+        if opt1.net_arch:
+            term_net_arch = opt1.net_arch[0]["vf"]
+        else:
+            term_net_arch = []
+
         terminations = option_baselines.aoc.policies.Termination(
             self.observation_space,
             self.action_space,
-            net_arch=opt1.net_arch[0]["vf"],  # TODO(Manuel): make this configurable
+            net_arch=term_net_arch,
             features_extractor=opt1.features_extractor_class(
                 self.observation_space, **opt1.features_extractor_kwargs
             ),  # TODO(Manuel): make this configurable
@@ -404,7 +411,7 @@ class OptionNet(torch.nn.Module):
                 option_observation = observation[option_mask]
 
             action_values[option_mask] = policy.predict_values(option_observation).squeeze(1)
-        return action_values, option_values.squeeze()
+        return action_values, option_values.squeeze(1)
 
     def evaluate_actions(self, observation, options, actions):
         meta_values, meta_log_probs, meta_entropies = self.meta_policy.evaluate_actions(observation, options)
