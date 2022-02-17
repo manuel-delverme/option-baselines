@@ -114,13 +114,14 @@ class AOC(OnPolicyAlgorithm):
         n_steps = 0
         rollout_buffer.reset()
         callback.on_rollout_start()
-        dones = self._last_episode_starts
+
+        episode_starts = dones = self._last_episode_starts
 
         while n_steps < n_rollout_steps:
             with torch.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
-                actions, values, log_probs, options, option_values, option_log_probs, termination_probs = self.policy(obs_tensor, dones)
+                actions, values, log_probs, options, option_values, option_log_probs, termination_probs = self.policy(obs_tensor, episode_starts)
             actions = actions.cpu().numpy()
 
             # Rescale and perform action
@@ -129,6 +130,7 @@ class AOC(OnPolicyAlgorithm):
             if isinstance(self.action_space, gym.spaces.Box):
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
+            episode_starts = dones
             new_obs, rewards, dones, infos = env.step(clipped_actions)
 
             self.num_timesteps += env.num_envs
@@ -176,10 +178,18 @@ class AOC(OnPolicyAlgorithm):
             self._last_episode_starts = dones
 
         with torch.no_grad():
-            # Compute value for the last timestep
+            # Compute value for the last time-step
             new_obs = obs_as_tensor(new_obs, self.device)
-            action_values, new_option_values = self.policy.predict_values(new_obs, options)
-            value_upon_arrival = torch.einsum("b,b->b", termination_probs, new_option_values) + torch.einsum("b,b->b", (1 - termination_probs), option_values)
+            action_values, meta_value = self.policy.predict_values(new_obs, options)
+
+            # beta(S',O) * V(S')
+            termination_value = torch.einsum("b,b->b", termination_probs, meta_value)
+
+            # (1 - beta(S',O)) * Q(S', O)
+            continuation_value = torch.einsum("b,b->b", (1 - termination_probs), option_values)
+
+            value_upon_arrival = termination_value + continuation_value
+            value_upon_arrival[dones] = 0
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_option_values=value_upon_arrival, option_termination_probs=termination_probs)
 
@@ -228,11 +238,11 @@ class AOC(OnPolicyAlgorithm):
             meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
 
             value_loss = F.mse_loss(rollout_data.returns, action_values)
-            meta_value_loss = F.mse_loss(rollout_data.option_returns, meta_values)
+            meta_value_loss = F.mse_loss(rollout_data.option_returns.squeeze(1), meta_values)
 
             # Entropy loss favor exploration, approximate entropy when no analytical form
             entropy_loss = -torch.mean(-action_log_prob) if entropy is None else -torch.mean(entropy)
-            entropy_loss += -torch.mean(-meta_log_prob) if meta_entropy is None else -torch.mean(meta_entropy)
+            meta_entropy_loss = -torch.mean(-meta_log_prob) if meta_entropy is None else -torch.mean(meta_entropy)
 
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
 
@@ -255,6 +265,7 @@ class AOC(OnPolicyAlgorithm):
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/entropy_loss", entropy_loss.item())
+        self.logger.record("train/meta_entropy_loss", meta_entropy_loss.item())
         self.logger.record("train/margin_loss", margin_loss.item())
         self.logger.record("train/termination_loss", termination_loss.item())
         self.logger.record("train/grad_norm", grad_norm)
@@ -370,14 +381,13 @@ class OptionNet(torch.nn.Module):
         self.terminations.train(training_mode)
         self.meta_policy.train(training_mode)
 
-    def forward(self, observation, dones):
+    def forward(self, observation, first_transition):
         meta_actions, meta_values, meta_log_probs = self.meta_policy(observation)
         meta_values = meta_values.squeeze(1)
 
         options_observation = self.options_preprocess(observation)
         option_terminates, termination_probs = self.terminations(options_observation, self.executing_option)
-        option_terminates = dones | option_terminates
-        termination_probs[dones] = torch.nan
+        termination_probs[first_transition] = 0.0  # The first option can not terminate before it starts
 
         self.executing_option[option_terminates] = meta_actions[option_terminates]
         actions, values, log_probs = (
