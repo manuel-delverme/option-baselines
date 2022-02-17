@@ -119,16 +119,11 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         yield from super(DictOptionRolloutBuffer, self).get(batch_size)
 
     def compute_returns_and_advantage(
-            self, last_values: torch.Tensor, dones: np.ndarray, last_option_values: Optional[torch.Tensor] = None
+            self, last_values: torch.Tensor, dones: np.ndarray, last_option_values: Optional[torch.Tensor] = None, option_termination_probs: Optional[torch.Tensor] = None,
     ) -> None:
         super(DictOptionRolloutBuffer, self).compute_returns_and_advantage(last_values, dones)
 
-        if last_option_values is None:
-            last_option_values = torch.zeros_like(last_values)
-        del last_values
         self.option_advantages = np.full_like(self.advantages, np.nan)
-
-        # TODO(Martin): halp, idk about the next
         last_option_values = last_option_values.clone().cpu().numpy().flatten()
 
         last_gae_lam = 0
@@ -139,11 +134,16 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
             else:
                 next_non_terminal = 1.0 - self.episode_starts[step + 1]
                 next_values = self.option_values[step + 1]
-            delta = self.rewards[step] + self.gamma * next_values * next_non_terminal - self.option_values[step]
+
+            # action_values, new_option_values = self.policy.predict_values(new_obs, options)
+            # value_upon_arrival = torch.einsum("b,b->b", termination_probs, new_option_values) + torch.einsum("b,b->b", (1 - termination_probs), option_values)
+            future_value = next_values * next_non_terminal - self.option_values[step]
+
+            delta = self.rewards[step] + self.gamma * future_value
             last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
             self.option_advantages[step] = last_gae_lam
 
-        for option_idx in np.unique(self.current_options):
-            option_ind = self.current_options == option_idx
-            self.option_advantages[option_ind] = self.returns[option_ind] - self.option_values[option_ind]
+        # for option_idx in np.unique(self.current_options):
+        #     option_ind = self.current_options == option_idx
+        #     self.option_advantages[option_ind] = self.returns[option_ind] - self.option_values[option_ind]
         self.option_returns = self.option_advantages + self.option_values

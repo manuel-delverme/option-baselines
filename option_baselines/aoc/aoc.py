@@ -181,7 +181,7 @@ class AOC(OnPolicyAlgorithm):
             action_values, new_option_values = self.policy.predict_values(new_obs, options)
             value_upon_arrival = torch.einsum("b,b->b", termination_probs, new_option_values) + torch.einsum("b,b->b", (1 - termination_probs), option_values)
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_option_values=value_upon_arrival)
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_option_values=value_upon_arrival, option_termination_probs=termination_probs)
 
         callback.on_rollout_end()
 
@@ -228,7 +228,7 @@ class AOC(OnPolicyAlgorithm):
             meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
 
             value_loss = F.mse_loss(rollout_data.returns, action_values)
-            meta_value_loss = F.mse_loss(rollout_data.option_returns.squeeze(1), meta_values)
+            meta_value_loss = F.mse_loss(rollout_data.option_returns, meta_values)
 
             # Entropy loss favor exploration, approximate entropy when no analytical form
             entropy_loss = -torch.mean(-action_log_prob) if entropy is None else -torch.mean(entropy)
