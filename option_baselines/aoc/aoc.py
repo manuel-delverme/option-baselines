@@ -236,10 +236,10 @@ class AOC(OnPolicyAlgorithm):
 
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
 
-            termination_loss = -((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
-            termination_loss += self.term_coef * termination_probs.norm()
+            margin_loss = -((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
+            termination_loss = self.term_coef * termination_probs.norm()
 
-            loss = (meta_policy_loss + policy_loss) + self.vf_coef * (meta_value_loss + value_loss) + self.ent_coef * entropy_loss + termination_loss
+            loss = (meta_policy_loss + policy_loss) + self.vf_coef * (meta_value_loss + value_loss) + self.ent_coef * entropy_loss + (termination_loss + margin_loss)
 
             # Optimization step
             self.policy.optimizer.zero_grad()
@@ -255,6 +255,7 @@ class AOC(OnPolicyAlgorithm):
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/entropy_loss", entropy_loss.item())
+        self.logger.record("train/margin_loss", margin_loss.item())
         self.logger.record("train/termination_loss", termination_loss.item())
         self.logger.record("train/grad_norm", grad_norm)
         self.logger.record("train/policy_loss", policy_loss.item())
@@ -398,7 +399,7 @@ class OptionNet(torch.nn.Module):
             act, val, log_prob = option_net(option_observation)
             actions[option_mask], values[option_mask], log_probs[option_mask] = act, val.squeeze(1), log_prob
 
-        return actions, values, log_probs, meta_actions, meta_values, meta_log_probs, termination_probs
+        return actions, values, log_probs, self.executing_option, meta_values, meta_log_probs, termination_probs
 
     def predict_values(self, observation, executing_option):
         option_values = self.meta_policy.predict_values(observation)
