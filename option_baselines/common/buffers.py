@@ -60,20 +60,19 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         super().__init__(*args, **kwargs)
 
     def reset(self):
-        self.current_options = np.zeros((self.buffer_size, self.n_envs), dtype=np.int64)
-        self.previous_options = np.zeros((self.buffer_size, self.n_envs), dtype=np.int64)
-        self.option_values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.option_log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        # self.termination_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.option_advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.current_options = np.empty((self.buffer_size, self.n_envs), dtype=np.int64)
+        self.previous_options = np.empty((self.buffer_size, self.n_envs), dtype=np.int64)
+        self.option_values = np.empty((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.option_log_probs = np.empty((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.option_advantages = np.empty((self.buffer_size, self.n_envs), dtype=np.float32)
         super().reset()
 
     def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> DictOptionRolloutBufferSamples:
         samples = super(DictOptionRolloutBuffer, self)._get_samples(batch_inds, env)
         return DictOptionRolloutBufferSamples(
             *samples,
-            previous_options=self.to_torch(self.current_options[batch_inds]),
-            current_options=self.to_torch(self.previous_options[batch_inds]),
+            previous_options=self.to_torch(self.previous_options[batch_inds]),
+            current_options=self.to_torch(self.current_options[batch_inds]),
             option_values=self.to_torch(self.option_values[batch_inds]),
             option_log_probs=self.to_torch(self.option_log_probs[batch_inds]),
             option_advantages=self.to_torch(self.option_advantages[batch_inds]),
@@ -93,7 +92,6 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
             current_option: Optional[torch.Tensor] = None,
             option_value: Optional[torch.Tensor] = None,
             option_log_prob: Optional[torch.Tensor] = None,
-            termination_prob: Optional[torch.Tensor] = None,
     ) -> None:
         previous_option = torch.full_like(self.previous_options[self.pos], np.nan) if previous_option is None else previous_option
         current_option = torch.full_like(self.current_options[self.pos], np.nan) if current_option is None else current_option
@@ -103,13 +101,14 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         )
         assert len(option_log_prob.shape) > 0, "option_log_prob can not be 0d"
         assert len(log_prob.shape) > 0, "log_prob2 can not be 0d"
+        assert (current_option >= 0).all()
+        assert torch.bitwise_or(previous_option >= 0, torch.isnan(previous_option)).all()
 
         self.previous_options[self.pos] = previous_option.numpy().copy()
         self.current_options[self.pos] = current_option.numpy().copy()
 
         self.option_values[self.pos] = option_value.clone().cpu().numpy().flatten()
         self.option_log_probs[self.pos] = option_log_prob.clone().cpu().numpy().squeeze()
-        # self.termination_probs[self.pos] = termination_prob.clone().cpu().numpy().squeeze()
         super(DictOptionRolloutBuffer, self).add(obs, action, reward, episode_start, value, log_prob)
 
     def get(self, batch_size: Optional[int] = None) -> Generator[OptionsRolloutBufferSamples, None, None]:

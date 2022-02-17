@@ -14,6 +14,7 @@ from torch.nn import functional as F
 import option_baselines.aoc
 import option_baselines.aoc.policies
 from option_baselines.common import buffers
+from option_baselines.common import constants
 
 
 class AOC(OnPolicyAlgorithm):
@@ -82,7 +83,7 @@ class AOC(OnPolicyAlgorithm):
         self.normalize_advantage = normalize_advantage
         self.num_options = num_options
         self.option_preprocess = option_preprocess
-        self._last_options = torch.full(size=(env.num_envs,), fill_value=np.nan)
+        self._last_options = torch.full(size=(env.num_envs,), fill_value=constants.NO_OPTIONS)
 
         # Update optimizer inside the policy if we want to use RMSProp
         # (original implementation) rather than Adam
@@ -168,7 +169,6 @@ class AOC(OnPolicyAlgorithm):
                 previous_option=self._last_options,
                 option_value=option_values,
                 option_log_prob=option_log_probs,
-                termination_prob=termination_probs,
             )
 
             self._last_obs = new_obs
@@ -205,8 +205,9 @@ class AOC(OnPolicyAlgorithm):
                 # Convert discrete action from float to long
                 actions = actions.long().flatten()
 
-            previous_options = rollout_data.current_options.squeeze(1)
-            current_options = rollout_data.previous_options.squeeze(1)
+            previous_options = rollout_data.previous_options.squeeze(1)
+            current_options = rollout_data.current_options.squeeze(1)
+
             observations = rollout_data.observations
 
             (meta_values, meta_log_prob, meta_entropy), (action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(observations, current_options, actions)
@@ -224,10 +225,10 @@ class AOC(OnPolicyAlgorithm):
 
             # Policy gradient loss
             policy_loss = -(advantages * action_log_prob).mean()
-            policy_loss += -(meta_advantages * meta_log_prob).mean()
+            meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
 
             value_loss = F.mse_loss(rollout_data.returns, action_values)
-            value_loss += F.mse_loss(rollout_data.option_returns.squeeze(1), meta_values)
+            meta_value_loss = F.mse_loss(rollout_data.option_returns.squeeze(1), meta_values)
 
             # Entropy loss favor exploration, approximate entropy when no analytical form
             entropy_loss = -torch.mean(-action_log_prob) if entropy is None else -torch.mean(entropy)
@@ -238,7 +239,7 @@ class AOC(OnPolicyAlgorithm):
             termination_loss = -((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
             termination_loss += self.term_coef * termination_probs.norm()
 
-            loss = policy_loss + self.vf_coef * value_loss + self.ent_coef * entropy_loss + termination_loss
+            loss = (meta_policy_loss + policy_loss) + self.vf_coef * (meta_value_loss + value_loss) + self.ent_coef * entropy_loss + termination_loss
 
             # Optimization step
             self.policy.optimizer.zero_grad()
@@ -258,6 +259,8 @@ class AOC(OnPolicyAlgorithm):
         self.logger.record("train/grad_norm", grad_norm)
         self.logger.record("train/policy_loss", policy_loss.item())
         self.logger.record("train/value_loss", value_loss.item())
+        self.logger.record("train/meta_policy_loss", meta_policy_loss.item())
+        self.logger.record("train/meta_value_loss", meta_value_loss.item())
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
 
@@ -358,7 +361,8 @@ class OptionNet(torch.nn.Module):
         del self.meta_policy.optimizer
 
         self.num_options = len(self.policies)
-        self.executing_option = torch.full((num_agents,), torch.iinfo(torch.long).max, dtype=torch.long)
+        # self.executing_option = torch.full((num_agents,), torch.iinfo(torch.long).max, dtype=torch.long)
+        self.executing_option = torch.full((num_agents,), constants.NO_OPTIONS)
 
     def set_training_mode(self, training_mode):
         self.policies.train(training_mode)
@@ -372,6 +376,7 @@ class OptionNet(torch.nn.Module):
         options_observation = self.options_preprocess(observation)
         option_terminates, termination_probs = self.terminations(options_observation, self.executing_option)
         option_terminates = dones | option_terminates
+        termination_probs[dones] = torch.nan
 
         self.executing_option[option_terminates] = meta_actions[option_terminates]
         actions, values, log_probs = (
