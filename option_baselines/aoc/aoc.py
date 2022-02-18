@@ -191,7 +191,7 @@ class AOC(OnPolicyAlgorithm):
             value_upon_arrival = termination_value + continuation_value
             value_upon_arrival[dones] = 0
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones,   last_value_upon_arrival=value_upon_arrival, option_termination_probs=termination_probs)
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_value_upon_arrival=value_upon_arrival, option_termination_probs=termination_probs)
 
         callback.on_rollout_end()
 
@@ -215,8 +215,8 @@ class AOC(OnPolicyAlgorithm):
                 # Convert discrete action from float to long
                 actions = actions.long().flatten()
 
-            previous_options = rollout_data.previous_options.squeeze(1)
-            current_options = rollout_data.current_options.squeeze(1)
+            previous_options = rollout_data.previous_options
+            current_options = rollout_data.current_options
 
             observations = rollout_data.observations
 
@@ -238,7 +238,7 @@ class AOC(OnPolicyAlgorithm):
             meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
 
             value_loss = F.mse_loss(rollout_data.returns, action_values)
-            meta_value_loss = F.mse_loss(rollout_data.option_returns.squeeze(1), meta_values)
+            meta_value_loss = F.mse_loss(rollout_data.option_returns, meta_values)
 
             # Entropy loss favor exploration, approximate entropy when no analytical form
             entropy_loss = -torch.mean(-action_log_prob) if entropy is None else -torch.mean(entropy)
@@ -249,7 +249,12 @@ class AOC(OnPolicyAlgorithm):
             margin_loss = -((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
             termination_loss = self.term_coef * termination_probs.norm()
 
-            loss = (meta_policy_loss + policy_loss) + self.vf_coef * (meta_value_loss + value_loss) + self.ent_coef * entropy_loss + (termination_loss + margin_loss)
+            loss = (
+                    (meta_policy_loss + policy_loss)
+                    + self.vf_coef * (meta_value_loss + value_loss)
+                    + self.ent_coef * entropy_loss  # + meta_entropy_loss
+                    + (termination_loss + margin_loss)
+            )
 
             # Optimization step
             self.policy.optimizer.zero_grad()
@@ -431,7 +436,7 @@ class OptionNet(torch.nn.Module):
 
     def evaluate_actions(self, observation, options, actions):
         meta_values, meta_log_probs, meta_entropies = self.meta_policy.evaluate_actions(observation, options)
-        observation = self.options_preprocess(observation)
+        option_observation = self.options_preprocess(observation)
 
         entropies, values, log_probs = (
             torch.full(actions.shape, torch.nan),
@@ -440,14 +445,14 @@ class OptionNet(torch.nn.Module):
         )
 
         for option_idx, policy in enumerate(self.policies):
-            option_mask, option_observation = get_option_mask(observation, options, option_idx)
+            option_mask, masked_option_observation = get_option_mask(option_observation, options, option_idx)
             if not option_mask.any():
                 continue
 
-            distribution = policy.get_distribution(option_observation)
+            distribution = policy.get_distribution(masked_option_observation)
 
             entropies[option_mask] = distribution.entropy()
-            values[option_mask] = policy.predict_values(option_observation).squeeze(1)
+            values[option_mask] = policy.predict_values(masked_option_observation).squeeze(1)
             log_probs[option_mask] = distribution.log_prob(actions[option_mask])
 
         return (meta_values, meta_log_probs, meta_entropies), (values, log_probs, entropies)

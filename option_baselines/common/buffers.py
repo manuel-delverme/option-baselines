@@ -71,13 +71,12 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         samples = super(DictOptionRolloutBuffer, self)._get_samples(batch_inds, env)
         return DictOptionRolloutBufferSamples(
             *samples,
-            previous_options=self.to_torch(self.previous_options[batch_inds]),
-            current_options=self.to_torch(self.current_options[batch_inds]),
-            meta_values=self.to_torch(self.meta_values[batch_inds]),
-            option_log_probs=self.to_torch(self.option_log_probs[batch_inds]),
-            option_advantages=self.to_torch(self.option_advantages[batch_inds]),
-            # termination_probs=self.to_torch(self.termination_probs[batch_inds]),
-            option_returns=self.to_torch(self.option_returns[batch_inds]),
+            previous_options=self.to_torch(self.previous_options[batch_inds]).flatten(),
+            current_options=self.to_torch(self.current_options[batch_inds]).flatten(),
+            meta_values=self.to_torch(self.meta_values[batch_inds]).flatten(),
+            option_log_probs=self.to_torch(self.option_log_probs[batch_inds]).flatten(),
+            option_advantages=self.to_torch(self.option_advantages[batch_inds].flatten()),
+            option_returns=self.to_torch(self.option_returns[batch_inds]).flatten(),
         )
 
     def add(
