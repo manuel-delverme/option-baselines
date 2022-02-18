@@ -121,7 +121,7 @@ class AOC(OnPolicyAlgorithm):
             with torch.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
-                actions, values, log_probs, options, option_values, option_log_probs, termination_probs = self.policy(obs_tensor, episode_starts)
+                actions, values, log_probs, options, meta_values, option_log_probs, termination_probs = self.policy(obs_tensor, episode_starts)
             actions = actions.cpu().numpy()
 
             # Rescale and perform action
@@ -169,7 +169,7 @@ class AOC(OnPolicyAlgorithm):
                 log_probs,
                 current_option=options,
                 previous_option=self._last_options,
-                option_value=option_values,
+                meta_value=meta_values,
                 option_log_prob=option_log_probs,
             )
 
@@ -186,12 +186,12 @@ class AOC(OnPolicyAlgorithm):
             termination_value = torch.einsum("b,b->b", termination_probs, meta_value)
 
             # (1 - beta(S',O)) * Q(S', O)
-            continuation_value = torch.einsum("b,b->b", (1 - termination_probs), option_values)
+            continuation_value = torch.einsum("b,b->b", (1 - termination_probs), action_values)
 
             value_upon_arrival = termination_value + continuation_value
             value_upon_arrival[dones] = 0
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_option_values=value_upon_arrival, option_termination_probs=termination_probs)
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones,   last_value_upon_arrival=value_upon_arrival, option_termination_probs=termination_probs)
 
         callback.on_rollout_end()
 
