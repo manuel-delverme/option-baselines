@@ -392,9 +392,10 @@ class OptionNet(torch.nn.Module):
 
         options_observation = self.options_preprocess(observation)
         option_terminates, termination_probs = self.terminations(options_observation, self.executing_option)
+        requires_new_option = option_terminates | first_transition
         termination_probs[first_transition] = 0.0  # The first option can not terminate before it starts
 
-        self.executing_option[option_terminates] = meta_actions[option_terminates]
+        self.executing_option[requires_new_option] = meta_actions[requires_new_option]
         actions, values, log_probs = (
             torch.empty_like(meta_actions),
             torch.full_like(meta_values, torch.nan),
