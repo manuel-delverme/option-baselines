@@ -246,7 +246,7 @@ class AOC(OnPolicyAlgorithm):
 
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
 
-            margin_loss = -((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
+            margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
             termination_loss = self.term_coef * termination_probs.norm()
 
             loss = (
@@ -390,12 +390,10 @@ class OptionNet(torch.nn.Module):
         meta_actions, meta_values, meta_log_probs = self.meta_policy(observation)
         meta_values = meta_values.squeeze(1)
 
-        options_observation = self.options_preprocess(observation)
-        option_terminates, termination_probs = self.terminations(options_observation, self.executing_option)
-        requires_new_option = option_terminates | first_transition
-        termination_probs[first_transition] = 0.0  # The first option can not terminate before it starts
+        self.executing_option, termination_probs = self._update_state(
+            self.executing_option, first_transition, meta_actions, observation)
 
-        self.executing_option[requires_new_option] = meta_actions[requires_new_option]
+        termination_probs[first_transition] = 0.0  # The first option can not terminate before it starts
         actions, values, log_probs = (
             torch.empty_like(meta_actions),
             torch.full_like(meta_values, torch.nan),
@@ -416,6 +414,13 @@ class OptionNet(torch.nn.Module):
             actions[option_mask], values[option_mask], log_probs[option_mask] = act, val.squeeze(1), log_prob
 
         return actions, values, log_probs, self.executing_option, meta_values, meta_log_probs, termination_probs
+
+    def _update_state(self, executing_option, first_transition, meta_actions, observation):
+        options_observation = self.options_preprocess(observation)
+        option_terminates, termination_probs = self.terminations(options_observation, executing_option)
+        requires_new_option = option_terminates | first_transition
+        executing_option[requires_new_option] = meta_actions[requires_new_option]
+        return executing_option, termination_probs
 
     def predict_values(self, observation, executing_option):
         option_values = self.meta_policy.predict_values(observation)
@@ -461,7 +466,7 @@ class OptionNet(torch.nn.Module):
     def predict(
             self,
             observation: np.ndarray,
-            state: Optional[Tuple[np.ndarray, ...]] = None,
+            state: Optional[np.ndarray] = None,
             episode_start: Optional[np.ndarray] = None,
             deterministic: bool = False,
     ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
@@ -481,15 +486,14 @@ class OptionNet(torch.nn.Module):
         self.set_training_mode(False)
         meta_actions, _states = self.meta_policy.predict(observation, state, episode_start, deterministic)
         observation = obs_as_tensor(observation, self.meta_policy.device)
+        meta_actions = torch.tensor(meta_actions)
 
-        if state is None:
-            executing_option = meta_actions
+        executing_option = state
+
+        if executing_option is None:
+            executing_option = torch.tensor(meta_actions)
         else:
-            executing_option = state
-            options_observation = self.options_preprocess(observation)
-            option_terminates, termination_probs = self.terminations(options_observation, executing_option)
-            option_terminates = episode_start | option_terminates
-            executing_option[option_terminates] = meta_actions[option_terminates]
+            executing_option, termination_probs = self._update_state(executing_option, episode_start, meta_actions, observation)
 
         actions = torch.empty_like(torch.tensor(meta_actions))
         for option_idx, option_net in enumerate(self.policies):
