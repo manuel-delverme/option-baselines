@@ -247,13 +247,13 @@ class AOC(OnPolicyAlgorithm):
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
 
             margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
-            termination_loss = self.term_coef * termination_probs.norm()
+            termination_loss = termination_probs.norm()
 
             loss = (
                     (meta_policy_loss + policy_loss)
                     + self.vf_coef * (meta_value_loss + value_loss)
                     + self.ent_coef * entropy_loss  # + meta_entropy_loss
-                    + (termination_loss + margin_loss)
+                    + (self.term_coef * termination_loss + margin_loss)
             )
 
             # Optimization step

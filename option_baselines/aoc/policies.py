@@ -43,7 +43,7 @@ class Termination(policies.BaseModel):
         features = self.extract_features(observation)
         termination_prob = torch.full((features.shape[0],), torch.nan)
 
-        termination_prob[executing_option == constants.NO_OPTIONS] = 1.
+        termination_prob[executing_option == constants.NO_OPTIONS] = 0.
         for option_idx, termination_net in enumerate(self.option_terminations):
             option_mask = executing_option == option_idx
             termination_prob[option_mask] = termination_net(features[option_mask]).squeeze()
