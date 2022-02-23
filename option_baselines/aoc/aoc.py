@@ -115,13 +115,13 @@ class AOC(OnPolicyAlgorithm):
         rollout_buffer.reset()
         callback.on_rollout_start()
 
-        episode_starts = dones = self._last_episode_starts
+        dones = self._last_episode_starts
 
         while n_steps < n_rollout_steps:
             with torch.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
-                actions, values, log_probs, options, meta_values, option_log_probs, termination_probs = self.policy(obs_tensor, episode_starts)
+                actions, values, log_probs, options, meta_values, option_log_probs, termination_probs = self.policy(obs_tensor, dones)
             actions = actions.cpu().numpy()
 
             # Rescale and perform action
@@ -130,7 +130,6 @@ class AOC(OnPolicyAlgorithm):
             if isinstance(self.action_space, gym.spaces.Box):
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
-            episode_starts = dones
             new_obs, rewards, dones, infos = env.step(clipped_actions)
 
             self.num_timesteps += env.num_envs
@@ -174,7 +173,7 @@ class AOC(OnPolicyAlgorithm):
             )
 
             self._last_obs = new_obs
-            self._last_options = options
+            self._last_options = options.clone()
             self._last_episode_starts = dones
 
         with torch.no_grad():
@@ -390,8 +389,7 @@ class OptionNet(torch.nn.Module):
         meta_actions, meta_values, meta_log_probs = self.meta_policy(observation)
         meta_values = meta_values.squeeze(1)
 
-        self.executing_option, termination_probs = self._update_state(
-            self.executing_option, first_transition, meta_actions, observation)
+        termination_probs = self.update_executing_option(first_transition, meta_actions, observation)
 
         termination_probs[first_transition] = 0.0  # The first option can not terminate before it starts
         actions, values, log_probs = (
@@ -415,12 +413,12 @@ class OptionNet(torch.nn.Module):
 
         return actions, values, log_probs, self.executing_option, meta_values, meta_log_probs, termination_probs
 
-    def _update_state(self, executing_option, first_transition, meta_actions, observation):
+    def update_executing_option(self, first_transition, meta_actions, observation):
         options_observation = self.options_preprocess(observation)
-        option_terminates, termination_probs = self.terminations(options_observation, executing_option)
+        option_terminates, termination_probs = self.terminations(options_observation, self.executing_option)
         requires_new_option = option_terminates | first_transition
-        executing_option[requires_new_option] = meta_actions[requires_new_option]
-        return executing_option, termination_probs
+        self.executing_option[requires_new_option] = meta_actions[requires_new_option]
+        return termination_probs
 
     def predict_values(self, observation, executing_option):
         option_values = self.meta_policy.predict_values(observation)
@@ -493,7 +491,7 @@ class OptionNet(torch.nn.Module):
         if executing_option is None:
             executing_option = torch.tensor(meta_actions)
         else:
-            executing_option, termination_probs = self._update_state(executing_option, episode_start, meta_actions, observation)
+            executing_option, termination_probs = self.update_executing_option(executing_option, episode_start, meta_actions, observation)
 
         actions = torch.empty_like(torch.tensor(meta_actions))
         for option_idx, option_net in enumerate(self.policies):
