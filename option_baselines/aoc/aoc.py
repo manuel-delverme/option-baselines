@@ -46,10 +46,9 @@ class AOC(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
-            option_preprocess: Optional[Callable[[torch.Tensor], torch.Tensor]] = lambda x: x,
+            option_preprocess: Optional[Callable[[torch.Tensor], torch.Tensor]] = lambda x: x,  # TODO: remove, it should be in the policy, or meta_policy
             _init_setup_model: bool = True,
     ):
-
         super(AOC, self).__init__(
             policy,
             env,
