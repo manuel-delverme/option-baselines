@@ -131,6 +131,9 @@ class AOC(OnPolicyAlgorithm):
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
+            # goals = [e.goal for e in env.envs]
+            # bonus = torch.tensor(goals) == self._last_options
+            # rewards = rewards + bonus.numpy()
 
             self.num_timesteps += env.num_envs
 
@@ -491,7 +494,7 @@ class OptionNet(torch.nn.Module):
         if executing_option is None:
             executing_option = torch.tensor(meta_actions)
         else:
-            executing_option, termination_probs = self.update_executing_option(executing_option, episode_start, meta_actions, observation)
+            _ = self.update_executing_option(episode_start, meta_actions, observation)
 
         actions = torch.empty_like(torch.tensor(meta_actions))
         for option_idx, option_net in enumerate(self.policies):

@@ -3,8 +3,8 @@ from typing import Any, Dict
 from typing import Optional, Union
 
 import gym
+import numpy as np
 import stable_baselines3.common.evaluation
-from gym.wrappers.monitoring import video_recorder
 from stable_baselines3.common import callbacks
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
@@ -42,11 +42,12 @@ class OptionRollout(callbacks.EvalCallback):
             callback=self._log_options_callback,
         )
         for k, frames in self.option_frames.items():
-            video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option_rollout_{k}"
-            recorder = video_recorder.VideoRecorder(env=self.eval_env, base_path=video_path, metadata=self.eval_env.unwrapped.metadata)
-            for frame in frames:
-                recorder._encode_image_frame(frame)
-            recorder.close()
+            video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option{k}_rollout"
+            from PIL import Image
+
+            img = np.stack(frames).mean(axis=0)
+            img = Image.fromarray(img.astype(np.uint8))
+            img.save(video_path + ".png")
 
         return True
 
@@ -55,4 +56,4 @@ class OptionRollout(callbacks.EvalCallback):
         env_idx = locals_["i"]
         env = locals_["env"].env.envs[env_idx]
         current_option = options[env_idx]
-        self.option_frames[current_option].append(env.render("ascii"))
+        self.option_frames[int(current_option)].append(env.render("ascii"))
