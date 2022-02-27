@@ -115,6 +115,7 @@ class AOC(OnPolicyAlgorithm):
         callback.on_rollout_start()
 
         dones = self._last_episode_starts
+        cum_rw = np.zeros(env.num_envs)
 
         while n_steps < n_rollout_steps:
             with torch.no_grad():
@@ -129,7 +130,9 @@ class AOC(OnPolicyAlgorithm):
             if isinstance(self.action_space, gym.spaces.Box):
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
+            print(clipped_actions)
             new_obs, rewards, dones, infos = env.step(clipped_actions)
+            cum_rw += rewards
             # goals = [e.goal for e in env.envs]
             # bonus = torch.tensor(goals) == self._last_options
             # rewards = rewards + bonus.numpy()
@@ -279,6 +282,9 @@ class AOC(OnPolicyAlgorithm):
         self.logger.record("train/value_loss", value_loss.item())
         self.logger.record("train/meta_policy_loss", meta_policy_loss.item())
         self.logger.record("train/meta_value_loss", meta_value_loss.item())
+        self.logger.record("train/meta_advantages", meta_advantages.mean().item())
+        self.logger.record("train/advantages", advantages.mean().item())
+
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
 
@@ -491,11 +497,11 @@ class OptionNet(torch.nn.Module):
         executing_option = state
 
         if executing_option is None:
-            executing_option = torch.tensor(meta_actions)
+            executing_option = meta_actions.clone()
         else:
             _ = self.update_executing_option(episode_start, meta_actions, observation)
 
-        actions = torch.empty_like(torch.tensor(meta_actions))
+        actions = torch.empty_like(meta_actions)
         for option_idx, option_net in enumerate(self.policies):
             option_mask = executing_option == option_idx
             if not option_mask.any():
