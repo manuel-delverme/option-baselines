@@ -46,7 +46,6 @@ class AOC(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
-            option_preprocess: Optional[Callable[[torch.Tensor], torch.Tensor]] = lambda x: x,  # TODO: remove, it should be in the policy, or meta_policy
             _init_setup_model: bool = True,
     ):
         super(AOC, self).__init__(
@@ -81,7 +80,6 @@ class AOC(OnPolicyAlgorithm):
         self.switching_margin = switching_margin
         self.normalize_advantage = normalize_advantage
         self.num_options = num_options
-        self.option_preprocess = option_preprocess
         self._last_options = torch.full(size=(env.num_envs,), fill_value=constants.NO_OPTIONS)
 
         # Update optimizer inside the policy if we want to use RMSProp
@@ -115,7 +113,7 @@ class AOC(OnPolicyAlgorithm):
         callback.on_rollout_start()
 
         dones = self._last_episode_starts
-        cum_rw = np.zeros(env.num_envs)
+
 
         while n_steps < n_rollout_steps:
             with torch.no_grad():
@@ -130,9 +128,8 @@ class AOC(OnPolicyAlgorithm):
             if isinstance(self.action_space, gym.spaces.Box):
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
-            print(clipped_actions)
             new_obs, rewards, dones, infos = env.step(clipped_actions)
-            cum_rw += rewards
+
             # goals = [e.goal for e in env.envs]
             # bonus = torch.tensor(goals) == self._last_options
             # rewards = rewards + bonus.numpy()
@@ -176,6 +173,7 @@ class AOC(OnPolicyAlgorithm):
                 meta_value=meta_values,
                 option_log_prob=option_log_probs,
             )
+            del values
 
             self._last_obs = new_obs
             self._last_options = options.clone()
@@ -184,13 +182,13 @@ class AOC(OnPolicyAlgorithm):
         with torch.no_grad():
             # Compute value for the last time-step
             new_obs = obs_as_tensor(new_obs, self.device)
-            action_values, meta_value = self.policy.predict_values(new_obs, options)
+            values, meta_value = self.policy.predict_values(new_obs, options)
 
             # beta(S',O) * V(S')
             termination_value = torch.einsum("b,b->b", termination_probs, meta_value)
 
             # (1 - beta(S',O)) * Q(S', O)
-            continuation_value = torch.einsum("b,b->b", (1 - termination_probs), action_values)
+            continuation_value = torch.einsum("b,b->b", (1 - termination_probs), values)
 
             value_upon_arrival = termination_value + continuation_value
             value_upon_arrival[dones] = 0
@@ -355,9 +353,7 @@ class AOC(OnPolicyAlgorithm):
             features_dim=opt1.features_dim,
             num_options=self.num_options,
         ).to(self.device)
-        self.policy = OptionNet(
-            policies, meta_policy, terminations, self.lr_schedule, num_agents=self.n_envs, **self.policy_kwargs, option_preprocess=self.option_preprocess,
-        )
+        self.policy = OptionNet(policies, meta_policy, terminations, self.lr_schedule, num_agents=self.n_envs, **self.policy_kwargs)
 
 
 class OptionNet(torch.nn.Module):
@@ -370,15 +366,12 @@ class OptionNet(torch.nn.Module):
             optimizer_class,
             optimizer_kwargs,
             num_agents,
-            option_preprocess,
     ):
         super(OptionNet, self).__init__()
         self.policies = policies
         self.meta_policy = meta_policy
         self.terminations = termination
         self.optimizer = optimizer_class(self.parameters(), lr(0), **optimizer_kwargs)
-
-        self.options_preprocess = option_preprocess
 
         for p in self.policies:
             del p.optimizer
@@ -422,17 +415,15 @@ class OptionNet(torch.nn.Module):
         return actions, values, log_probs, self.executing_option, meta_values, meta_log_probs, termination_probs
 
     def update_executing_option(self, first_transition, meta_actions, observation):
-        options_observation = self.options_preprocess(observation)
-        option_terminates, termination_probs = self.terminations(options_observation, self.executing_option)
+        option_terminates, termination_probs = self.terminations(observation, self.executing_option)
         requires_new_option = option_terminates | first_transition
         self.executing_option[requires_new_option] = meta_actions[requires_new_option]
         return termination_probs
 
     def predict_values(self, observation, executing_option):
-        option_values = self.meta_policy.predict_values(observation)
-        observation = self.options_preprocess(observation)
+        meta_values = self.meta_policy.predict_values(observation)
 
-        action_values = torch.full(executing_option.shape, float("nan"))
+        values = torch.full(executing_option.shape, float("nan"))
         for option_idx, policy in enumerate(self.policies):
             option_mask = executing_option == option_idx
             if not option_mask.any():
@@ -443,12 +434,11 @@ class OptionNet(torch.nn.Module):
             else:
                 option_observation = observation[option_mask]
 
-            action_values[option_mask] = policy.predict_values(option_observation).squeeze(1)
-        return action_values, option_values.squeeze(1)
+            values[option_mask] = policy.predict_values(observation).squeeze(1)
+        return values, meta_values.squeeze(1)
 
     def evaluate_actions(self, observation, options, actions):
         meta_values, meta_log_probs, meta_entropies = self.meta_policy.evaluate_actions(observation, options)
-        option_observation = self.options_preprocess(observation)
 
         entropies, values, log_probs = (
             torch.full(actions.shape, torch.nan),
@@ -457,7 +447,7 @@ class OptionNet(torch.nn.Module):
         )
 
         for option_idx, policy in enumerate(self.policies):
-            option_mask, masked_option_observation = get_option_mask(option_observation, options, option_idx)
+            option_mask, masked_option_observation = get_option_mask(observation, options, option_idx)
             if not option_mask.any():
                 continue
 
