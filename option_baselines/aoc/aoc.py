@@ -434,7 +434,7 @@ class OptionNet(torch.nn.Module):
             else:
                 option_observation = observation[option_mask]
 
-            values[option_mask] = policy.predict_values(observation).squeeze(1)
+            values[option_mask] = policy.predict_values(option_observation).squeeze(1)
         return values, meta_values.squeeze(1)
 
     def evaluate_actions(self, observation, options, actions):
