@@ -1,10 +1,12 @@
 import collections
+import PIL.Image
 from typing import Any, Dict
 from typing import Optional, Union
 
+import cv2
 import gym
+import numpy as np
 import stable_baselines3.common.evaluation
-from gym.wrappers.monitoring import video_recorder
 from stable_baselines3.common import callbacks
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
@@ -19,7 +21,7 @@ class OptionRollout(callbacks.EvalCallback):
             eval_freq: int = 10000,
             log_path: Optional[str] = None,
             best_model_save_path: Optional[str] = None,
-            deterministic: bool = True,
+            deterministic: bool = False,
 
     ):
         super(OptionRollout, self).__init__(eval_env, callback_on_new_best, n_eval_episodes, eval_freq, log_path, best_model_save_path, deterministic)
@@ -41,13 +43,17 @@ class OptionRollout(callbacks.EvalCallback):
             warn=False,
             callback=self._log_options_callback,
         )
+        print(f"Parsing options {len(self.option_frames)}, {self.num_timesteps}")
         for k, frames in self.option_frames.items():
-            video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option_rollout_{k}"
-            recorder = video_recorder.VideoRecorder(env=self.eval_env, base_path=video_path, metadata=self.eval_env.unwrapped.metadata)
-            for frame in frames:
-                recorder._encode_image_frame(frame)
-            recorder.close()
-
+            print(f"Option: {k}, {len(frames)} frames")
+            video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option{k}_rollout"
+            img = np.stack(frames).mean(axis=0).astype(np.uint8)
+            np.clip(img * 4, a_max=255, a_min=None, out=img)
+            image_size = 256
+            img = cv2.resize(img, (image_size, image_size), fx=0, fy=0, interpolation=cv2.INTER_NEAREST)
+            cv2.imwrite(video_path + ".png", img)
+            del img
+        self.option_frames = collections.defaultdict(list)
         return True
 
     def _log_options_callback(self, locals_: Dict[str, Any], globals_: Dict[str, Any]) -> None:
@@ -55,4 +61,4 @@ class OptionRollout(callbacks.EvalCallback):
         env_idx = locals_["i"]
         env = locals_["env"].env.envs[env_idx]
         current_option = options[env_idx]
-        self.option_frames[current_option].append(env.render("ascii"))
+        self.option_frames[int(current_option)].append(env.render("rgb_array"))
