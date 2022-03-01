@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Type, Union, Tuple, Callable
+from typing import Any, Dict, Optional, Type, Union, Tuple
 
 import gym
 import numpy as np
@@ -31,6 +31,7 @@ class AOC(OnPolicyAlgorithm):
             gamma: float = 0.99,
             gae_lambda: float = 1.0,
             ent_coef: float = 0.0,
+            meta_ent_coef: float = 0.0,
             term_coef=0.01,
             vf_coef: float = 0.5,
             switching_margin: float = 0.0,
@@ -77,6 +78,7 @@ class AOC(OnPolicyAlgorithm):
         self.meta_policy_class = meta_policy
 
         self.term_coef = term_coef
+        self.meta_ent_coef = meta_ent_coef
         self.switching_margin = switching_margin
         self.normalize_advantage = normalize_advantage
         self.num_options = num_options
@@ -113,7 +115,6 @@ class AOC(OnPolicyAlgorithm):
         callback.on_rollout_start()
 
         dones = self._last_episode_starts
-
 
         while n_steps < n_rollout_steps:
             with torch.no_grad():
@@ -254,7 +255,8 @@ class AOC(OnPolicyAlgorithm):
             loss = (
                     (meta_policy_loss + policy_loss)
                     + self.vf_coef * (meta_value_loss + value_loss)
-                    + self.ent_coef * entropy_loss  # + meta_entropy_loss
+                    + self.ent_coef * entropy_loss
+                    + self.meta_ent_coef * meta_entropy_loss
                     + (self.term_coef * termination_loss + margin_loss)
             )
 
