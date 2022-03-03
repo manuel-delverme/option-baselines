@@ -41,6 +41,7 @@ class AOC(OnPolicyAlgorithm):
             use_sde: bool = False,
             sde_sample_freq: int = -1,
             normalize_advantage: bool = False,
+            offpolicy_learning: bool = True,
             tensorboard_log: Optional[str] = None,
             create_eval_env: bool = False,
             policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -81,6 +82,7 @@ class AOC(OnPolicyAlgorithm):
         self.meta_ent_coef = meta_ent_coef
         self.switching_margin = switching_margin
         self.normalize_advantage = normalize_advantage
+        self.offpolicy_learning = offpolicy_learning
         self.num_options = num_options
         self._last_options = torch.full(size=(env.num_envs,), fill_value=constants.NO_OPTIONS)
 
@@ -233,6 +235,10 @@ class AOC(OnPolicyAlgorithm):
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             meta_advantages = rollout_data.option_advantages
+            if not self.offpolicy_learning:
+                meta_advantages = torch.einsum("b,b->b", termination_probs, meta_advantages)
+                meta_entropy = torch.einsum("b,b->b", termination_probs, meta_entropy)
+
             if self.normalize_advantage:
                 meta_advantages = (meta_advantages - meta_advantages.mean()) / (meta_advantages.std() + 1e-8)
 
@@ -241,7 +247,13 @@ class AOC(OnPolicyAlgorithm):
             meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
 
             value_loss = F.mse_loss(rollout_data.returns, action_values)
-            meta_value_loss = F.mse_loss(rollout_data.option_returns, meta_values)
+
+            if self.offpolicy_learning:
+                meta_value_loss = F.mse_loss(rollout_data.option_returns, meta_values)
+            else:
+                value_error = rollout_data.option_returns - meta_values
+                weighted_value_error = torch.einsum("b,b->b", termination_probs, value_error)
+                meta_value_loss = weighted_value_error.pow(2).mean()
 
             # Entropy loss favor exploration, approximate entropy when no analytical form
             entropy_loss = -torch.mean(-action_log_prob) if entropy is None else -torch.mean(entropy)
