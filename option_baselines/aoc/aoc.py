@@ -17,6 +17,27 @@ from option_baselines.common import buffers
 from option_baselines.common import constants
 
 
+class MultiOptimizer(torch.optim.Optimizer):
+    def __init__(self, sub_optimizers):
+        self.sub_optimizers = sub_optimizers
+
+    def step(self, closure=None):
+        for sub_optimizer in self.sub_optimizers:
+            sub_optimizer.step(closure)
+
+    def zero_grad(self, set_to_none=False):
+        for sub_optimizer in self.sub_optimizers:
+            sub_optimizer.zero_grad(set_to_none)
+
+    @property
+    def param_groups(self):
+        for sub_optimizer in self.sub_optimizers:
+            yield from sub_optimizer.param_groups
+
+    def state(self):
+        return [sub_optimizer.state() for sub_optimizer in self.sub_optimizers]
+
+
 class AOC(OnPolicyAlgorithm):
     rollout_buffer: Union[buffers.OptionRolloutBuffer, buffers.DictOptionRolloutBuffer]
 
@@ -385,11 +406,13 @@ class OptionNet(torch.nn.Module):
         self.policies = policies
         self.meta_policy = meta_policy
         self.terminations = termination
-        self.optimizer = optimizer_class(self.parameters(), lr(0), **optimizer_kwargs)
+        self.terminations_optimizer = optimizer_class(self.terminations.parameters(), lr(0), **optimizer_kwargs)
 
-        for p in self.policies:
-            del p.optimizer
-        del self.meta_policy.optimizer
+        self.optimizer = MultiOptimizer([
+            self.meta_policy.optimizer,
+            self.terminations_optimizer,
+            *[p.optimizer for p in self.policies],
+        ])
 
         self.num_options = len(self.policies)
         # self.executing_option = torch.full((num_agents,), torch.iinfo(torch.long).max, dtype=torch.long)
