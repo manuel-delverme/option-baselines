@@ -2,7 +2,11 @@ from typing import Any, Dict, Optional, Type, Union, Tuple
 
 import gym
 import numpy as np
+import option_baselines.aoc
+import option_baselines.aoc.policies
 import torch
+from option_baselines.common import buffers
+from option_baselines.common import constants
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -10,11 +14,6 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
-
-import option_baselines.aoc
-import option_baselines.aoc.policies
-from option_baselines.common import buffers
-from option_baselines.common import constants
 
 
 class MultiOptimizer(torch.optim.Optimizer):
@@ -277,8 +276,11 @@ class AOC(OnPolicyAlgorithm):
                 meta_value_loss = weighted_value_error.pow(2).mean()
 
             # Entropy loss favor exploration, approximate entropy when no analytical form
-            entropy_loss = -torch.mean(-action_log_prob) if entropy is None else -torch.mean(entropy)
-            meta_entropy_loss = -torch.mean(-meta_log_prob) if meta_entropy is None else -torch.mean(meta_entropy)
+            meta_entropies = -meta_log_prob if meta_entropy is None else meta_entropy
+            entropies = -action_log_prob if entropy is None else entropy
+
+            meta_entropy_loss = -torch.mean(meta_entropies * self.meta_ent_coef)
+            entropy_loss = -torch.mean(entropies * self.ent_coef)
 
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
 
@@ -288,8 +290,8 @@ class AOC(OnPolicyAlgorithm):
             loss = (
                     (meta_policy_loss + policy_loss)
                     + self.vf_coef * (meta_value_loss + value_loss)
-                    + self.ent_coef * entropy_loss
-                    + self.meta_ent_coef * meta_entropy_loss
+                    + meta_entropy_loss
+                    + entropy_loss
                     + (self.term_coef * termination_loss + margin_loss)
             )
 
