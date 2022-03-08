@@ -319,17 +319,12 @@ class AOC(OnPolicyAlgorithm):
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
 
-    def termination_loss(self, locals, globals):
-        # KL(bernoulli_learned, bernoulli(0.2))
-        # = E_x[log(p(x)) - log(q(x))]
-        # = E_x[log(p(x)) - log(0.2) - log(1 - 0.2)]
-        # = E_x[log(p(x)) - log(0.2)]
-        # = E_x[log(p(x)) - log(0.2) - log(0.2)]
-        meta_advantages = locals["meta_advantages"]
-        termination_probs = locals["termination_probs"]
+    def termination_loss(self, locals_, _globals):
+        meta_advantages = locals_["meta_advantages"]
+        termination_probs = locals_["termination_probs"]
 
         margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
-        termination_loss = termination_probs.norm() * self.termination_coef
+        termination_loss = termination_probs.norm() * self.term_coef
         self.logger.record("train/margin_loss", margin_loss.item())
         self.logger.record("train/termination_loss", termination_loss.item())
 
