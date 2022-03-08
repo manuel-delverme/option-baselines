@@ -2,11 +2,7 @@ from typing import Any, Dict, Optional, Type, Union, Tuple
 
 import gym
 import numpy as np
-import option_baselines.aoc
-import option_baselines.aoc.policies
 import torch
-from option_baselines.common import buffers
-from option_baselines.common import constants
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -14,6 +10,11 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
+
+import option_baselines.aoc
+import option_baselines.aoc.policies
+from option_baselines.common import buffers
+from option_baselines.common import constants
 
 
 class MultiOptimizer(torch.optim.Optimizer):
@@ -284,15 +285,12 @@ class AOC(OnPolicyAlgorithm):
 
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
 
-            margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
-            termination_loss = termination_probs.norm()
-
             loss = (
                     (meta_policy_loss + policy_loss)
                     + self.vf_coef * (meta_value_loss + value_loss)
                     + meta_entropy_loss
                     + entropy_loss
-                    + (self.term_coef * termination_loss + margin_loss)
+                    + self.termination_loss(locals(), globals())
             )
 
             # Optimization step
@@ -310,8 +308,6 @@ class AOC(OnPolicyAlgorithm):
         self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/entropy_loss", entropy_loss.item())
         self.logger.record("train/meta_entropy_loss", meta_entropy_loss.item())
-        self.logger.record("train/margin_loss", margin_loss.item())
-        self.logger.record("train/termination_loss", termination_loss.item())
         self.logger.record("train/grad_norm", grad_norm)
         self.logger.record("train/policy_loss", policy_loss.item())
         self.logger.record("train/value_loss", value_loss.item())
@@ -322,6 +318,23 @@ class AOC(OnPolicyAlgorithm):
 
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
+
+    def termination_loss(self, locals, globals):
+        # KL(bernoulli_learned, bernoulli(0.2))
+        # = E_x[log(p(x)) - log(q(x))]
+        # = E_x[log(p(x)) - log(0.2) - log(1 - 0.2)]
+        # = E_x[log(p(x)) - log(0.2)]
+        # = E_x[log(p(x)) - log(0.2) - log(0.2)]
+        meta_advantages = locals["meta_advantages"]
+        termination_probs = locals["termination_probs"]
+
+        margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
+        termination_loss = termination_probs.norm() * self.termination_coef
+        self.logger.record("train/margin_loss", margin_loss.item())
+        self.logger.record("train/termination_loss", termination_loss.item())
+
+        loss = termination_loss + margin_loss
+        return loss
 
     def learn(
             self,
