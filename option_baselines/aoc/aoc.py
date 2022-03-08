@@ -17,27 +17,6 @@ from option_baselines.common import buffers
 from option_baselines.common import constants
 
 
-class MultiOptimizer(torch.optim.Optimizer):
-    def __init__(self, sub_optimizers):
-        self.sub_optimizers = sub_optimizers
-
-    def step(self, closure=None):
-        for sub_optimizer in self.sub_optimizers:
-            sub_optimizer.step(closure)
-
-    def zero_grad(self, set_to_none=False):
-        for sub_optimizer in self.sub_optimizers:
-            sub_optimizer.zero_grad(set_to_none)
-
-    @property
-    def param_groups(self):
-        for sub_optimizer in self.sub_optimizers:
-            yield from sub_optimizer.param_groups
-
-    def state(self):
-        return [sub_optimizer.state() for sub_optimizer in self.sub_optimizers]
-
-
 class AOC(OnPolicyAlgorithm):
     rollout_buffer: Union[buffers.OptionRolloutBuffer, buffers.DictOptionRolloutBuffer]
 
@@ -324,11 +303,11 @@ class AOC(OnPolicyAlgorithm):
         termination_probs = locals_["termination_probs"]
 
         margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
-        termination_loss = termination_probs.norm() * self.term_coef
+        termination_loss = termination_probs.norm()
         self.logger.record("train/margin_loss", margin_loss.item())
         self.logger.record("train/termination_loss", termination_loss.item())
 
-        loss = termination_loss + margin_loss
+        loss = termination_loss  * self.term_coef + margin_loss
         return loss
 
     def learn(
@@ -418,14 +397,25 @@ class OptionNet(torch.nn.Module):
         self.terminations = termination
         self.terminations_optimizer = optimizer_class(self.terminations.parameters(), lr(0), **optimizer_kwargs)
 
-        self.optimizer = MultiOptimizer([
-            self.meta_policy.optimizer,
-            self.terminations_optimizer,
-            *[p.optimizer for p in self.policies],
-        ])
+        param_groups = []
+        tracked_params = set()
+        for pg in self.meta_policy.optimizer.param_groups:
+            param_groups.append(pg)
+            tracked_params.update(pg["params"])
+
+        for pg in self.terminations_optimizer.param_groups:
+            param_groups.append(pg)
+            tracked_params.update(pg["params"])
+
+        for policy in self.policies:
+            for pg in policy.optimizer.param_groups:
+                param_groups.append(pg)
+                tracked_params.update(pg["params"])
+
+        assert not [p for p in self.parameters() if p not in tracked_params]
+        self.optimizer = optimizer_class(param_groups, lr(0), **optimizer_kwargs)
 
         self.num_options = len(self.policies)
-        # self.executing_option = torch.full((num_agents,), torch.iinfo(torch.long).max, dtype=torch.long)
         self.executing_option = torch.full((num_agents,), constants.NO_OPTIONS)
 
     def set_training_mode(self, training_mode):
