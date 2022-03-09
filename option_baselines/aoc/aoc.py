@@ -306,8 +306,9 @@ class AOC(OnPolicyAlgorithm):
         termination_loss = termination_probs.norm()
         self.logger.record("train/margin_loss", margin_loss.item())
         self.logger.record("train/termination_loss", termination_loss.item())
+        self.logger.record("train/termination_mean", termination_probs.mean().item())
 
-        loss = termination_loss  * self.term_coef + margin_loss
+        loss = termination_loss * self.term_coef + margin_loss
         return loss
 
     def learn(
