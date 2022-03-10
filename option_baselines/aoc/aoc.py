@@ -270,6 +270,7 @@ class AOC(OnPolicyAlgorithm):
                     + meta_entropy_loss
                     + entropy_loss
                     + self.termination_loss(locals(), globals())
+                    + self.auxiliary_loss(locals(), globals())
             )
 
             # Optimization step
@@ -310,6 +311,9 @@ class AOC(OnPolicyAlgorithm):
 
         loss = termination_loss * self.term_coef + margin_loss
         return loss
+
+    def auxiliary_loss(self, locals_, globals_):
+        return 0.0
 
     def learn(
             self,
