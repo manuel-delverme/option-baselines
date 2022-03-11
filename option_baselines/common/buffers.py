@@ -34,7 +34,7 @@ class DictOptionRolloutBufferSamples(OptionsRolloutBufferSamples):
 class OptionRolloutBuffer(buffers.RolloutBuffer):
     def __init__(self, *args, **kwargs):
         # TODO: rename option to meta
-        self._tensor_names = [
+        self._meta_tensor_names = [
             "current_options",
             "previous_options",
             "option_log_probs",
@@ -49,7 +49,7 @@ class OptionRolloutBuffer(buffers.RolloutBuffer):
         # self.termination_probs = None
         self.option_advantages = None
         self.option_returns = None
-        assert all(hasattr(self, name) for name in self._tensor_names), "All tensor names must be defined in both _tensor_names and the class __init__, sorry"
+        assert all(hasattr(self, name) for name in self._meta_tensor_names), "All tensor names must be defined in both _meta_tensor_names and the class __init__, sorry"
         super().__init__(*args, **kwargs)
 
     def reset(self):
@@ -105,7 +105,7 @@ class OptionRolloutBuffer(buffers.RolloutBuffer):
 
     def get(self, batch_size: Optional[int] = None) -> Generator[OptionsRolloutBufferSamples, None, None]:
         if not self.generator_ready:
-            for tensor in self._tensor_names:
+            for tensor in self._meta_tensor_names:
                 self.__dict__[tensor] = self.swap_and_flatten(self.__dict__[tensor])
 
         yield from super().get(batch_size)
@@ -139,7 +139,7 @@ class OptionRolloutBuffer(buffers.RolloutBuffer):
 class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
     def __init__(self, *args, **kwargs):
         # TODO: rename option to meta
-        self._tensor_names = [
+        self._meta_tensor_names = [
             "current_options",
             "previous_options",
             "option_log_probs",
@@ -154,7 +154,7 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         # self.termination_probs = None
         self.option_advantages = None
         self.option_returns = None
-        assert all(hasattr(self, name) for name in self._tensor_names), "All tensor names must be defined in both _tensor_names and the class __init__, sorry"
+        assert all(hasattr(self, name) for name in self._meta_tensor_names), "All tensor names must be defined in both _meta_tensor_names and the class __init__, sorry"
         super().__init__(*args, **kwargs)
 
     def reset(self):
@@ -210,7 +210,7 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
 
     def get(self, batch_size: Optional[int] = None) -> Generator[OptionsRolloutBufferSamples, None, None]:
         if not self.generator_ready:
-            for tensor in self._tensor_names:
+            for tensor in self._meta_tensor_names:
                 self.__dict__[tensor] = self.swap_and_flatten(self.__dict__[tensor])
 
         yield from super(DictOptionRolloutBuffer, self).get(batch_size)
