@@ -405,15 +405,18 @@ class OptionNet(torch.nn.Module):
         param_groups = []
         tracked_params = set()
         for pg in self.meta_policy.optimizer.param_groups:
+            pg["name"] = "meta_policy"
             param_groups.append(pg)
             tracked_params.update(pg["params"])
 
         for pg in self.terminations_optimizer.param_groups:
+            pg["name"] = "terminations"
             param_groups.append(pg)
             tracked_params.update(pg["params"])
 
-        for policy in self.policies:
+        for idx, policy in enumerate(self.policies):
             for pg in policy.optimizer.param_groups:
+                pg["name"] = f"option_policy{idx}"
                 param_groups.append(pg)
                 tracked_params.update(pg["params"])
 
