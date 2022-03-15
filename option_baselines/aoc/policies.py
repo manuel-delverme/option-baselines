@@ -41,7 +41,7 @@ class Termination(policies.BaseModel):
         assert (torch.bitwise_or(executing_option < self.num_options, executing_option == constants.NO_OPTIONS)).all()
         assert (executing_option >= 0).all()
         features = self.extract_features(observation)
-        termination_prob = torch.full((features.shape[0],), torch.nan)
+        termination_prob = torch.full((features.shape[0],), float("nan"))
 
         termination_prob[executing_option == constants.NO_OPTIONS] = 0.
         for option_idx, termination_net in enumerate(self.option_terminations):

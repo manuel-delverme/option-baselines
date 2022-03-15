@@ -2,7 +2,11 @@ from typing import Any, Dict, Optional, Type, Union, Tuple
 
 import gym
 import numpy as np
+import option_baselines.aoc
+import option_baselines.aoc.policies
 import torch
+from option_baselines.common import buffers
+from option_baselines.common import constants
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -10,11 +14,6 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
-
-import option_baselines.aoc
-import option_baselines.aoc.policies
-from option_baselines.common import buffers
-from option_baselines.common import constants
 
 
 class AOC(OnPolicyAlgorithm):
@@ -440,8 +439,8 @@ class OptionNet(torch.nn.Module):
         termination_probs[first_transition] = 0.0  # The first option can not terminate before it starts
         actions, values, log_probs = (
             torch.empty_like(meta_actions),
-            torch.full_like(meta_values, torch.nan),
-            torch.full_like(meta_log_probs, torch.nan),
+            torch.full_like(meta_values, float("nan")),
+            torch.full_like(meta_log_probs, float("nan")),
         )
 
         for option_idx, option_net in enumerate(self.policies):
@@ -486,9 +485,9 @@ class OptionNet(torch.nn.Module):
         meta_values, meta_log_probs, meta_entropies = self.meta_policy.evaluate_actions(observation, options)
 
         entropies, values, log_probs = (
-            torch.full(actions.shape, torch.nan),
-            torch.full(actions.shape, torch.nan),
-            torch.full(actions.shape, torch.nan),
+            torch.full(actions.shape, float("nan")),
+            torch.full(actions.shape, float("nan")),
+            torch.full(actions.shape, float("nan")),
         )
 
         for option_idx, policy in enumerate(self.policies):
