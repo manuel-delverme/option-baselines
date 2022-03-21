@@ -5,13 +5,13 @@ from stable_baselines3.common.preprocessing import is_image_space
 from torch import nn
 
 
-class NatureCNN(torch_layers.BaseFeaturesExtractor):
+class SimpleCNN(torch_layers.BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 512):
-        super(NatureCNN, self).__init__(observation_space, features_dim)
+        super(SimpleCNN, self).__init__(observation_space, features_dim)
         # We assume CxHxW images (channels first)
         # Re-ordering will be done by pre-preprocessing or wrapper
         assert is_image_space(observation_space, check_channels=False), (
-            "You should use NatureCNN "
+            "You should use SimpleCNN "
             f"only with images not with {observation_space}\n"
             "(you are probably using `CnnPolicy` instead of `MlpPolicy` or `MultiInputPolicy`)\n"
             "If you are using a custom environment,\n"
