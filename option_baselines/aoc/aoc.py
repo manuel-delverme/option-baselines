@@ -2,7 +2,11 @@ from typing import Any, Dict, Optional, Type, Union, Tuple
 
 import gym
 import numpy as np
+import option_baselines.aoc
+import option_baselines.aoc.policies
 import torch
+from option_baselines.common import buffers
+from option_baselines.common import constants
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -10,11 +14,6 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
-
-import option_baselines.aoc
-import option_baselines.aoc.policies
-from option_baselines.common import buffers
-from option_baselines.common import constants
 
 
 class AOC(OnPolicyAlgorithm):
@@ -256,20 +255,21 @@ class AOC(OnPolicyAlgorithm):
                 meta_value_loss = weighted_value_error.pow(2).mean()
 
             # Entropy loss favor exploration, approximate entropy when no analytical form
-            entropy_loss = -torch.mean(-action_log_prob) if entropy is None else -torch.mean(entropy)
-            meta_entropy_loss = -torch.mean(-meta_log_prob) if meta_entropy is None else -torch.mean(meta_entropy)
+            meta_entropies = -meta_log_prob if meta_entropy is None else meta_entropy
+            entropies = -action_log_prob if entropy is None else entropy
+
+            meta_entropy_loss = -torch.mean(meta_entropies * self.meta_ent_coef)
+            entropy_loss = -torch.mean(entropies * self.ent_coef)
 
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
-
-            margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
-            termination_loss = termination_probs.norm()
 
             loss = (
                     (meta_policy_loss + policy_loss)
                     + self.vf_coef * (meta_value_loss + value_loss)
-                    + self.ent_coef * entropy_loss
-                    + self.meta_ent_coef * meta_entropy_loss
-                    + (self.term_coef * termination_loss + margin_loss)
+                    + meta_entropy_loss
+                    + entropy_loss
+                    + self.termination_loss(locals(), globals())
+                    + self.auxiliary_loss(locals(), globals())
             )
 
             # Optimization step
@@ -287,8 +287,6 @@ class AOC(OnPolicyAlgorithm):
         self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/entropy_loss", entropy_loss.item())
         self.logger.record("train/meta_entropy_loss", meta_entropy_loss.item())
-        self.logger.record("train/margin_loss", margin_loss.item())
-        self.logger.record("train/termination_loss", termination_loss.item())
         self.logger.record("train/grad_norm", grad_norm)
         self.logger.record("train/policy_loss", policy_loss.item())
         self.logger.record("train/value_loss", value_loss.item())
@@ -299,6 +297,22 @@ class AOC(OnPolicyAlgorithm):
 
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
+
+    def termination_loss(self, locals_, _globals):
+        meta_advantages = locals_["meta_advantages"]
+        termination_probs = locals_["termination_probs"]
+
+        margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
+        termination_loss = termination_probs.norm()
+        self.logger.record("train/margin_loss", margin_loss.item())
+        self.logger.record("train/termination_loss", termination_loss.item())
+        self.logger.record("train/termination_mean", termination_probs.mean().item())
+
+        loss = termination_loss * self.term_coef + margin_loss
+        return loss
+
+    def auxiliary_loss(self, locals_, globals_):
+        return 0.0
 
     def learn(
             self,
@@ -385,14 +399,30 @@ class OptionNet(torch.nn.Module):
         self.policies = policies
         self.meta_policy = meta_policy
         self.terminations = termination
-        self.optimizer = optimizer_class(self.parameters(), lr(0), **optimizer_kwargs)
+        self.terminations_optimizer = optimizer_class(self.terminations.parameters(), lr(0), **optimizer_kwargs)
 
-        for p in self.policies:
-            del p.optimizer
-        del self.meta_policy.optimizer
+        param_groups = []
+        tracked_params = set()
+        for pg in self.meta_policy.optimizer.param_groups:
+            pg["name"] = "meta_policy"
+            param_groups.append(pg)
+            tracked_params.update(pg["params"])
+
+        for pg in self.terminations_optimizer.param_groups:
+            pg["name"] = "terminations"
+            param_groups.append(pg)
+            tracked_params.update(pg["params"])
+
+        for idx, policy in enumerate(self.policies):
+            for pg in policy.optimizer.param_groups:
+                pg["name"] = f"option_policy{idx}"
+                param_groups.append(pg)
+                tracked_params.update(pg["params"])
+
+        assert not [p for p in self.parameters() if p not in tracked_params]
+        self.optimizer = optimizer_class(param_groups, lr(0), **optimizer_kwargs)
 
         self.num_options = len(self.policies)
-        # self.executing_option = torch.full((num_agents,), torch.iinfo(torch.long).max, dtype=torch.long)
         self.executing_option = torch.full((num_agents,), constants.NO_OPTIONS)
 
     def set_training_mode(self, training_mode):
@@ -409,8 +439,8 @@ class OptionNet(torch.nn.Module):
         termination_probs[first_transition] = 0.0  # The first option can not terminate before it starts
         actions, values, log_probs = (
             torch.empty_like(meta_actions),
-            torch.full_like(meta_values, torch.nan),
-            torch.full_like(meta_log_probs, torch.nan),
+            torch.full_like(meta_values, float("nan")),
+            torch.full_like(meta_log_probs, float("nan")),
         )
 
         for option_idx, option_net in enumerate(self.policies):
@@ -455,9 +485,9 @@ class OptionNet(torch.nn.Module):
         meta_values, meta_log_probs, meta_entropies = self.meta_policy.evaluate_actions(observation, options)
 
         entropies, values, log_probs = (
-            torch.full(actions.shape, torch.nan),
-            torch.full(actions.shape, torch.nan),
-            torch.full(actions.shape, torch.nan),
+            torch.full(actions.shape, float("nan")),
+            torch.full(actions.shape, float("nan")),
+            torch.full(actions.shape, float("nan")),
         )
 
         for option_idx, policy in enumerate(self.policies):
