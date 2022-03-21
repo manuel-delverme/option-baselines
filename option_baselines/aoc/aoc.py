@@ -419,7 +419,7 @@ class OptionNet(torch.nn.Module):
                 param_groups.append(pg)
                 tracked_params.update(pg["params"])
 
-        assert not [p for p in self.parameters() if p not in tracked_params]
+        assert not [p for p in self.parameters() if p not in tracked_params and p.requires_grad]
         self.optimizer = optimizer_class(param_groups, lr(0), **optimizer_kwargs)
 
         self.num_options = len(self.policies)
