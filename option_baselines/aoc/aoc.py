@@ -263,14 +263,8 @@ class AOC(OnPolicyAlgorithm):
 
             # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
 
-            loss = (
-                    (meta_policy_loss + policy_loss)
-                    + self.vf_coef * (meta_value_loss + value_loss)
-                    + meta_entropy_loss
-                    + entropy_loss
-                    + self.termination_loss(locals(), globals())
-                    + self.auxiliary_loss(locals(), globals())
-            )
+            # Option loss
+            loss = self.loss_fn(locals(), globals())
 
             # Optimization step
             self.policy.optimizer.zero_grad()
@@ -297,6 +291,19 @@ class AOC(OnPolicyAlgorithm):
 
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
+
+    def loss_fn(self, locals, globals):
+        loss = 0
+        loss += locals["policy_loss"]
+        loss += locals["meta_policy_loss"]
+        loss += self.vf_coef * locals["value_loss"]
+        loss += self.vf_coef * locals["meta_value_loss"]
+        loss += locals["entropy_loss"]
+        loss += locals["meta_entropy_loss"]
+        loss += self.termination_loss(locals(), globals())
+        loss += self.auxiliary_loss(locals(), globals())
+        # TODO: remove termination and auxiliary loss function
+        return loss
 
     def termination_loss(self, locals_, _globals):
         meta_advantages = locals_["meta_advantages"]
