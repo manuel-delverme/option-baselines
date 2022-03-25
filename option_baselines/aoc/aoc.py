@@ -2,11 +2,7 @@ from typing import Any, Dict, Optional, Type, Union, Tuple
 
 import gym
 import numpy as np
-import option_baselines.aoc
-import option_baselines.aoc.policies
 import torch
-from option_baselines.common import buffers
-from option_baselines.common import constants
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -14,6 +10,11 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
+
+import option_baselines.aoc
+import option_baselines.aoc.policies
+from option_baselines.common import buffers
+from option_baselines.common import constants
 
 
 class AOC(OnPolicyAlgorithm):
@@ -288,20 +289,41 @@ class AOC(OnPolicyAlgorithm):
         self.logger.record("train/meta_value_loss", meta_value_loss.item())
         self.logger.record("train/meta_advantages", meta_advantages.mean().item())
         self.logger.record("train/advantages", advantages.mean().item())
+        adv_sim = torch.cosine_similarity(
+            torch.tensor(self.rollout_buffer.advantages.flatten()),
+            torch.tensor(self.rollout_buffer.option_advantages.flatten()), 0, eps=1e-12)
+
+        self.logger.record("train/advantages_similarity", adv_sim)
+
+        img_counts = np.unique(rollout_data.observations["image"], axis=0, return_counts=True)
+        self.logger.record("rollout/images", len(img_counts[1]))
+
+        for k, g in self.policy.train_grads.items():
+            for lookback in range(len(self.policy.train_grads)):
+                if lookback in {0, 1, 2, 3, 4, 5} or lookback % 10 == 0:
+                    if lookback >= len(g):
+                        continue
+
+                    if (g[0] == g[-lookback]).all():
+                        n_grad_sim = 1.  # Avoid very small gradients being influenced by the epsilon
+                    else:
+                        n_grad_sim = torch.cosine_similarity(g[0], g[-lookback], 0, eps=1e-12).item()
+
+                    self.logger.record(f"step_cos_sim_{lookback}/{k}", n_grad_sim)
 
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
 
-    def loss_fn(self, locals, globals):
+    def loss_fn(self, locals_, globals_):
         loss = 0
-        loss += locals["policy_loss"]
-        loss += locals["meta_policy_loss"]
-        loss += self.vf_coef * locals["value_loss"]
-        loss += self.vf_coef * locals["meta_value_loss"]
-        loss += locals["entropy_loss"]
-        loss += locals["meta_entropy_loss"]
-        loss += self.termination_loss(locals(), globals())
-        loss += self.auxiliary_loss(locals(), globals())
+        loss += locals_["policy_loss"]
+        loss += locals_["meta_policy_loss"]
+        loss += self.vf_coef * locals_["value_loss"]
+        loss += self.vf_coef * locals_["meta_value_loss"]
+        loss += locals_["entropy_loss"]
+        loss += locals_["meta_entropy_loss"]
+        loss += self.termination_loss(locals_, globals_)
+        loss += self.auxiliary_loss(locals_, globals_)
         # TODO: remove termination and auxiliary loss function
         return loss
 
@@ -310,7 +332,7 @@ class AOC(OnPolicyAlgorithm):
         termination_probs = locals_["termination_probs"]
 
         margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
-        termination_loss = termination_probs.norm()
+        termination_loss = termination_probs.mean()
         self.logger.record("train/margin_loss", margin_loss.item())
         self.logger.record("train/termination_loss", termination_loss.item())
         self.logger.record("train/termination_mean", termination_probs.mean().item())
