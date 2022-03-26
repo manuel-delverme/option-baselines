@@ -298,19 +298,6 @@ class AOC(OnPolicyAlgorithm):
         img_counts = np.unique(rollout_data.observations["image"], axis=0, return_counts=True)
         self.logger.record("rollout/images", len(img_counts[1]))
 
-        for k, g in self.policy.train_grads.items():
-            for lookback in range(len(self.policy.train_grads)):
-                if lookback in {0, 1, 2, 3, 4, 5} or lookback % 10 == 0:
-                    if lookback >= len(g):
-                        continue
-
-                    if (g[0] == g[-lookback]).all():
-                        n_grad_sim = 1.  # Avoid very small gradients being influenced by the epsilon
-                    else:
-                        n_grad_sim = torch.cosine_similarity(g[0], g[-lookback], 0, eps=1e-12).item()
-
-                    self.logger.record(f"step_cos_sim_{lookback}/{k}", n_grad_sim)
-
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
 
