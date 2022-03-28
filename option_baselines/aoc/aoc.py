@@ -48,6 +48,7 @@ class AOC(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
+            termination_clas=option_baselines.aoc.policies.Termination,
             _init_setup_model: bool = True,
     ):
         super(AOC, self).__init__(
@@ -77,6 +78,7 @@ class AOC(OnPolicyAlgorithm):
             ),
         )
         self.meta_policy_class = meta_policy
+        self.termination_class = termination_class
 
         self.term_coef = term_coef
         self.meta_ent_coef = meta_ent_coef
@@ -387,7 +389,7 @@ class AOC(OnPolicyAlgorithm):
         else:
             term_net_arch = []
 
-        terminations = option_baselines.aoc.policies.Termination(
+        terminations = self.termination_class(
             self.observation_space,
             self.action_space,
             net_arch=term_net_arch,
