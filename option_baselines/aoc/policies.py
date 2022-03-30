@@ -2,11 +2,10 @@ from typing import List, Tuple, Type
 
 import gym
 import torch.distributions
+from option_baselines.common import constants
 from stable_baselines3.common import policies
 from stable_baselines3.common import torch_layers
 from torch import nn
-
-from option_baselines.common import constants
 
 
 class Termination(policies.BaseModel):
@@ -28,7 +27,6 @@ class Termination(policies.BaseModel):
             features_extractor=features_extractor,
             normalize_images=normalize_images,
         )
-        self.num_options = num_options
         self.option_terminations = nn.ModuleList()
 
         for idx in range(num_options):
@@ -38,7 +36,7 @@ class Termination(policies.BaseModel):
             self.option_terminations.append(q_net)
 
     def forward(self, observation: torch.Tensor, executing_option) -> Tuple[torch.Tensor, ...]:
-        assert (torch.bitwise_or(executing_option < self.num_options, executing_option == constants.NO_OPTIONS)).all()
+        assert (torch.bitwise_or(executing_option < len(self.option_terminations), executing_option == constants.NO_OPTIONS)).all()
         assert (executing_option >= 0).all()
         features = self.extract_features(observation)
         termination_prob = torch.full((features.shape[0],), float("nan"))

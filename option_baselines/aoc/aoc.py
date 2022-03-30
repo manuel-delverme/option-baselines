@@ -2,6 +2,10 @@ from typing import Any, Dict, Optional, Type, Union, Tuple
 
 import gym
 import numpy as np
+import option_baselines.aoc
+import option_baselines.aoc.policies
+import option_baselines.common.buffers as buffers
+import option_baselines.common.constants
 import torch
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
@@ -11,14 +15,9 @@ from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
 
-import option_baselines.aoc
-import option_baselines.aoc.policies
-from option_baselines.common import buffers
-from option_baselines.common import constants
-
 
 class AOC(OnPolicyAlgorithm):
-    rollout_buffer: Union[buffers.OptionRolloutBuffer, buffers.DictOptionRolloutBuffer]
+    rollout_buffer: Union[option_baselines.common.buffers.OptionRolloutBuffer, option_baselines.common.buffers.DictOptionRolloutBuffer]
 
     def __init__(
             self,
@@ -48,7 +47,7 @@ class AOC(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
-            termination_clas=option_baselines.aoc.policies.Termination,
+            termination_class=None,
             _init_setup_model: bool = True,
     ):
         super(AOC, self).__init__(
@@ -78,7 +77,7 @@ class AOC(OnPolicyAlgorithm):
             ),
         )
         self.meta_policy_class = meta_policy
-        self.termination_class = termination_class
+        self.termination_class = termination_class or option_baselines.aoc.policies.Termination
 
         self.term_coef = term_coef
         self.meta_ent_coef = meta_ent_coef
@@ -86,7 +85,7 @@ class AOC(OnPolicyAlgorithm):
         self.normalize_advantage = normalize_advantage
         self.offpolicy_learning = offpolicy_learning
         self.num_options = num_options
-        self._last_options = torch.full(size=(env.num_envs,), fill_value=constants.NO_OPTIONS)
+        self._last_options = torch.full(size=(env.num_envs,), fill_value=option_baselines.common.constants.NO_OPTIONS)
 
         # Update optimizer inside the policy if we want to use RMSProp
         # (original implementation) rather than Adam
@@ -441,7 +440,7 @@ class OptionNet(torch.nn.Module):
         self.optimizer = optimizer_class(param_groups, lr(0), **optimizer_kwargs)
 
         self.num_options = len(self.policies)
-        self.executing_option = torch.full((num_agents,), constants.NO_OPTIONS)
+        self.executing_option = torch.full((num_agents,), option_baselines.common.constants.NO_OPTIONS)
 
     def set_training_mode(self, training_mode):
         self.policies.train(training_mode)

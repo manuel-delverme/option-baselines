@@ -167,15 +167,11 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
 
     def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> DictOptionRolloutBufferSamples:
         samples = super(DictOptionRolloutBuffer, self)._get_samples(batch_inds, env)
-        return DictOptionRolloutBufferSamples(
-            *samples,
-            previous_options=self.to_torch(self.previous_options[batch_inds]).flatten(),
-            current_options=self.to_torch(self.current_options[batch_inds]).flatten(),
-            meta_values=self.to_torch(self.meta_values[batch_inds]).flatten(),
-            option_log_probs=self.to_torch(self.option_log_probs[batch_inds]).flatten(),
-            option_advantages=self.to_torch(self.option_advantages[batch_inds].flatten()),
-            option_returns=self.to_torch(self.option_returns[batch_inds]).flatten(),
-        )
+        new_data = {}
+        for tensor in self._meta_tensor_names:
+            new_data[tensor] = self.to_torch(self.__dict__[tensor][batch_inds]).flatten()
+
+        return DictOptionRolloutBufferSamples(*samples, **new_data)
 
     def add(
             self,
@@ -221,7 +217,7 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         super(DictOptionRolloutBuffer, self).compute_returns_and_advantage(last_values, dones)
 
         self.option_advantages = np.full_like(self.advantages, np.nan)
-        last_value_upon_arrival = last_value_upon_arrival.clone().cpu().numpy().flatten()
+        last_value_upon_arrival = last_value_upon_arrival.clone().cpu().numpy()
 
         last_gae_lam = 0
         for step in reversed(range(self.buffer_size)):
