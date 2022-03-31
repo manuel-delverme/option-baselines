@@ -48,7 +48,7 @@ class AOC(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
-            termination_clas=option_baselines.aoc.policies.Termination,
+            termination_class=None,
             _init_setup_model: bool = True,
     ):
         super(AOC, self).__init__(
@@ -78,6 +78,8 @@ class AOC(OnPolicyAlgorithm):
             ),
         )
         self.meta_policy_class = meta_policy
+        if termination_class is None:
+            termination_class = option_baselines.aoc.policies.Termination
         self.termination_class = termination_class
 
         self.term_coef = term_coef
@@ -280,8 +282,8 @@ class AOC(OnPolicyAlgorithm):
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
         self._n_updates += 1
-        self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("train/explained_variance", explained_var)
+        # self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+        # self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/entropy_loss", entropy_loss.item())
         self.logger.record("train/meta_entropy_loss", meta_entropy_loss.item())
         self.logger.record("train/grad_norm", grad_norm)
