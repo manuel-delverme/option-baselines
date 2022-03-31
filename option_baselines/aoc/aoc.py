@@ -48,9 +48,12 @@ class AOC(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
-            termination_clas=option_baselines.aoc.policies.Termination,
+            termination_class=None,
             _init_setup_model: bool = True,
     ):
+        if termination_class is None:
+            termination_class = option_baselines.aoc.policies.Termination
+
         super(AOC, self).__init__(
             policy,
             env,
