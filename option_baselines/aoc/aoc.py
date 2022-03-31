@@ -51,6 +51,9 @@ class AOC(OnPolicyAlgorithm):
             termination_class=None,
             _init_setup_model: bool = True,
     ):
+        if termination_class is None:
+            termination_class = option_baselines.aoc.policies.Termination
+
         super(AOC, self).__init__(
             policy,
             env,
