@@ -269,7 +269,7 @@ class AOC(OnPolicyAlgorithm):
             meta_entropy_loss = -torch.mean(meta_entropies * self.meta_ent_coef)
             entropy_loss = -torch.mean(entropies * self.ent_coef)
 
-            # TODO(Martin) this is written by feeling, there should be a t-1 slicing somewhere
+
 
             # Option loss
             loss = self.loss_fn(locals(), globals())
@@ -483,7 +483,7 @@ class OptionNet(torch.nn.Module):
 
     def update_executing_option(self, first_transition, meta_actions, observation):
         option_terminates, termination_probs = self.terminations(observation, self.executing_option)
-        requires_new_option = option_terminates | first_transition
+        requires_new_option = np.logical_or(option_terminates, first_transition)
         self.executing_option[requires_new_option] = meta_actions[requires_new_option]
         return termination_probs
 
