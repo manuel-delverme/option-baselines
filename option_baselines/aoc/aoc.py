@@ -400,7 +400,7 @@ class AOC(OnPolicyAlgorithm):
             net_arch=term_net_arch,
             features_extractor=opt1.features_extractor_class(
                 self.observation_space, **opt1.features_extractor_kwargs
-            ),  # TODO(Manuel): make this configurable
+            ),
             features_dim=opt1.features_dim,
             num_options=self.num_options,
         ).to(self.device)
