@@ -51,3 +51,13 @@ class Termination(policies.BaseModel):
 
         option_termination = torch.distributions.Bernoulli(termination_prob).sample()
         return option_termination.numpy().astype(dtype=bool), termination_prob
+
+    def forward_offpolicy(self, observation: torch.Tensor) -> Tuple[torch.Tensor, ...]:
+        features = self.extract_features(observation)
+        termination_prob = torch.full((features.shape[0], len(self.option_terminations)), float("nan"))
+        option_termination = torch.full((features.shape[0], len(self.option_terminations)), float("nan"))
+
+        for option_idx, termination_net in enumerate(self.option_terminations):
+            termination_prob[:, option_idx] = termination_net(features).squeeze()
+            option_termination[:, option_idx] = torch.distributions.Bernoulli(termination_prob[:, option_idx]).sample()
+        return option_termination.numpy().astype(dtype=bool), termination_prob
