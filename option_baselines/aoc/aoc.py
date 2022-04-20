@@ -242,16 +242,17 @@ class AOC(OnPolicyAlgorithm):
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             meta_advantages = rollout_data.option_advantages
-            if not self.offpolicy_learning:
-                meta_advantages = torch.einsum("b,b->b", termination_probs, meta_advantages)
-                meta_entropy = torch.einsum("b,b->b", termination_probs, meta_entropy)
-
             if self.normalize_advantage:
                 meta_advantages = (meta_advantages - meta_advantages.mean()) / (meta_advantages.std() + 1e-8)
 
             # Policy gradient loss
             policy_loss = -(advantages * action_log_prob).mean()
-            meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
+            if self.offpolicy_learning:
+                meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
+            else:
+                controllable_meta_advantages = torch.einsum("b,b->b", termination_probs, meta_advantages)
+                meta_entropy = torch.einsum("b,b->b", termination_probs, meta_entropy)
+                meta_policy_loss = -(controllable_meta_advantages * meta_log_prob).mean()
 
             value_loss = F.mse_loss(rollout_data.returns, action_values)
 
@@ -268,8 +269,6 @@ class AOC(OnPolicyAlgorithm):
 
             meta_entropy_loss = -torch.mean(meta_entropies * self.meta_ent_coef)
             entropy_loss = -torch.mean(entropies * self.ent_coef)
-
-
 
             # Option loss
             loss = self.loss_fn(locals(), globals())
