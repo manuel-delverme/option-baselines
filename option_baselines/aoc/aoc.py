@@ -301,9 +301,6 @@ class AOC(OnPolicyAlgorithm):
 
         self.logger.record("train/advantages_similarity", adv_sim)
 
-        img_counts = np.unique(rollout_data.observations["image"], axis=0, return_counts=True)
-        self.logger.record("rollout/images", len(img_counts[1]))
-
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
 
