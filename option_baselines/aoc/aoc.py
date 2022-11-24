@@ -45,6 +45,7 @@ class AOC(OnPolicyAlgorithm):
             tensorboard_log: Optional[str] = None,
             create_eval_env: bool = False,
             policy_kwargs: Optional[Dict[str, Any]] = None,
+            optimizer_kwargs: Optional[Dict[str, Any]] = None,
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
@@ -80,6 +81,7 @@ class AOC(OnPolicyAlgorithm):
                 gym.spaces.MultiBinary,
             ),
         )
+        self.optimizer_kwargs = optimizer_kwargs
         self.meta_policy_class = meta_policy
         if termination_class is None:
             termination_class = option_baselines.aoc.policies.Termination
@@ -400,7 +402,7 @@ class AOC(OnPolicyAlgorithm):
             features_dim=opt1.features_dim,
             num_options=self.num_options,
         ).to(self.device)
-        self.policy = OptionNet(policies, meta_policy, terminations, self.lr_schedule, num_agents=self.n_envs, **self.policy_kwargs)
+        self.policy = OptionNet(policies, meta_policy, terminations, self.lr_schedule, num_agents=self.n_envs, **self.optimizer_kwargs)
 
 
 class OptionNet(torch.nn.Module):
