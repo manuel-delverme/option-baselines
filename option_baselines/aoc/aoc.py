@@ -24,6 +24,8 @@ class AOC(OnPolicyAlgorithm):
             self,
             meta_policy: Union[str, Type[ActorCriticPolicy]],
             policy: Union[str, Type[ActorCriticPolicy]],
+            termination_class: "option_baselines.aoc.policies.Termination",
+
             env: Union[GymEnv, str],
             num_options: int,
             learning_rate: Union[float, Schedule] = 7e-4,
@@ -38,23 +40,26 @@ class AOC(OnPolicyAlgorithm):
             max_grad_norm: float = 0.5,
             rms_prop_eps: float = 1e-5,
             use_rms_prop: bool = True,
-            use_sde: bool = False,
             sde_sample_freq: int = -1,
             normalize_advantage: bool = False,
             offpolicy_learning: bool = True,
             tensorboard_log: Optional[str] = None,
             create_eval_env: bool = False,
+
+            meta_policy_kwargs: Optional[Dict[str, Any]] = None,
             policy_kwargs: Optional[Dict[str, Any]] = None,
+            termination_kwargs: Optional[Dict[str, Any]] = None,
+
             optimizer_kwargs: Optional[Dict[str, Any]] = None,
+
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
-            termination_class=None,
             _init_setup_model: bool = True,
     ):
-        if termination_class is None:
-            termination_class = option_baselines.aoc.policies.Termination
-
+        """
+        This class wraps meta-policy and option-policies into a single policy-like object.
+        """
         super(AOC, self).__init__(
             policy,
             env,
@@ -64,8 +69,8 @@ class AOC(OnPolicyAlgorithm):
             gae_lambda=gae_lambda,
             ent_coef=ent_coef,
             vf_coef=vf_coef,
+            use_sde=False,
             max_grad_norm=max_grad_norm,
-            use_sde=use_sde,
             sde_sample_freq=sde_sample_freq,
             tensorboard_log=tensorboard_log,
             policy_kwargs=policy_kwargs,
@@ -81,11 +86,12 @@ class AOC(OnPolicyAlgorithm):
                 gym.spaces.MultiBinary,
             ),
         )
-        self.optimizer_kwargs = optimizer_kwargs
         self.meta_policy_class = meta_policy
-        if termination_class is None:
-            termination_class = option_baselines.aoc.policies.Termination
         self.termination_class = termination_class
+
+        self.optimizer_kwargs = optimizer_kwargs
+        self.meta_policy_kwargs = meta_policy_kwargs
+        self.termination_kwargs = termination_kwargs
 
         self.term_coef = term_coef
         self.meta_ent_coef = meta_ent_coef
@@ -205,7 +211,8 @@ class AOC(OnPolicyAlgorithm):
             value_upon_arrival = termination_value + continuation_value
             value_upon_arrival[dones] = 0
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_value_upon_arrival=value_upon_arrival, option_termination_probs=termination_probs)
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_value_upon_arrival=value_upon_arrival,
+                                                     option_termination_probs=termination_probs)
 
         callback.on_rollout_end()
 
@@ -234,7 +241,8 @@ class AOC(OnPolicyAlgorithm):
 
             observations = rollout_data.observations
 
-            (meta_values, meta_log_prob, meta_entropy), (action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(observations, current_options, actions)
+            (meta_values, meta_log_prob, meta_entropy), (action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(
+                observations, current_options, actions)
             _, termination_probs = self.policy.terminations(observations, previous_options)
             action_values, meta_values = action_values.flatten(), meta_values.flatten()
 
@@ -361,6 +369,16 @@ class AOC(OnPolicyAlgorithm):
         )
 
     def _setup_model(self) -> None:
+        """
+        Setup:
+        - learning rate schedule
+        - random seed
+        - rollout buffer
+        - option-policies
+        - meta-policy
+        - termination policy
+        - proxy policy (to behave like a normal flat policy)
+        """
         self._setup_lr_schedule()
         self.set_random_seed(self.seed)
 
@@ -377,30 +395,19 @@ class AOC(OnPolicyAlgorithm):
         for _ in range(self.num_options):
             policies.append(
                 self.policy_class(
-                    self.observation_space, self.action_space, self.lr_schedule, use_sde=self.use_sde, **self.policy_kwargs
+                    self.observation_space, self.action_space, self.lr_schedule, **self.policy_kwargs
                 ).to(self.device)
             )
 
         option_space = gym.spaces.Discrete(self.num_options)
         meta_policy = self.meta_policy_class(
-            self.observation_space, option_space, self.lr_schedule, use_sde=self.use_sde, **self.policy_kwargs
+            self.observation_space, option_space, self.lr_schedule, **self.meta_policy_kwargs
         ).to(self.device)
-
-        opt1 = policies[0]
-        if opt1.net_arch:
-            term_net_arch = opt1.net_arch[0]["vf"]
-        else:
-            term_net_arch = []
 
         terminations = self.termination_class(
             self.observation_space,
-            self.action_space,
-            net_arch=term_net_arch,
-            features_extractor=opt1.features_extractor_class(
-                self.observation_space, **opt1.features_extractor_kwargs
-            ),
-            features_dim=opt1.features_dim,
             num_options=self.num_options,
+            **self.termination_kwargs
         ).to(self.device)
         self.policy = OptionNet(policies, meta_policy, terminations, self.lr_schedule, num_agents=self.n_envs, **self.optimizer_kwargs)
 
