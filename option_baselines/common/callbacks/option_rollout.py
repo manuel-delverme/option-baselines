@@ -1,5 +1,5 @@
 import collections
-import PIL.Image
+import os
 from typing import Any, Dict
 from typing import Optional, Union
 
@@ -24,15 +24,24 @@ class OptionRollout(callbacks.EvalCallback):
             deterministic: bool = False,
 
     ):
-        super(OptionRollout, self).__init__(eval_env, callback_on_new_best, n_eval_episodes, eval_freq, log_path, best_model_save_path, deterministic)
+        super(OptionRollout, self).__init__(
+            eval_env=eval_env,
+            callback_on_new_best=callback_on_new_best,
+            n_eval_episodes=n_eval_episodes,
+            eval_freq=eval_freq,
+            log_path=log_path,
+            best_model_save_path=best_model_save_path,
+            deterministic=deterministic,
+        )
         self.option_frames = collections.defaultdict(list)
         self.last_log = self.eval_freq
+        os.makedirs(os.path.abspath("videos"), exist_ok=True)
 
     def _on_step(self) -> bool:
         if (self.num_timesteps - self.last_log) <= self.eval_freq:
             return True
-
         self.last_log = self.num_timesteps
+
         stable_baselines3.common.evaluation.evaluate_policy(
             self.model,
             self.eval_env,
@@ -43,22 +52,22 @@ class OptionRollout(callbacks.EvalCallback):
             warn=False,
             callback=self._log_options_callback,
         )
-        print(f"Parsing options {len(self.option_frames)}, {self.num_timesteps}")
+        print(f"Parsing options {len(self.option_frames)}, timestep {self.num_timesteps}")
+
         for k, frames in self.option_frames.items():
-            print(f"Option: {k}, {len(frames)} frames")
-            video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option{k}_rollout"
-            img = np.stack(frames).mean(axis=0).astype(np.uint8)
+            video_path = f"videos/{self.num_timesteps}_option{k}_rollout"
+            img = 255 - np.stack(frames).mean(axis=0).astype(np.uint8)
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
             np.clip(img * 4, a_max=255, a_min=None, out=img)
-            image_size = 256
-            img = cv2.resize(img, (image_size, image_size), fx=0, fy=0, interpolation=cv2.INTER_NEAREST)
             cv2.imwrite(video_path + ".png", img)
             del img
+
         self.option_frames = collections.defaultdict(list)
         return True
 
     def _log_options_callback(self, locals_: Dict[str, Any], globals_: Dict[str, Any]) -> None:
         options = locals_["states"]
         env_idx = locals_["i"]
-        env = locals_["env"].env.envs[env_idx]
+        env = locals_["env"].envs[env_idx]
         current_option = options[env_idx]
-        self.option_frames[int(current_option)].append(env.render("rgb_array"))
+        self.option_frames[int(current_option)].append(env.render("rgb_array", highlight=False))
