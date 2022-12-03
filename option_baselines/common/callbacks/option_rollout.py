@@ -52,10 +52,10 @@ class OptionRollout(callbacks.EvalCallback):
             warn=False,
             callback=self._log_options_callback,
         )
-        print(f"Parsing options {len(self.option_frames)}, timestep {self.num_timesteps}")
+        print(f"Parsing options: {len(self.option_frames)}, timestep: {self.num_timesteps}")
 
         for k, frames in self.option_frames.items():
-            video_path = f"videos/{self.num_timesteps}_option{k}_rollout"
+            video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option{k}_rollout"
             img = 255 - np.stack(frames).mean(axis=0).astype(np.uint8)
             img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
             np.clip(img * 4, a_max=255, a_min=None, out=img)
