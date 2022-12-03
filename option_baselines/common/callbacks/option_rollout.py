@@ -40,6 +40,8 @@ class OptionRollout(callbacks.EvalCallback):
     def _on_step(self) -> bool:
         if (self.num_timesteps - self.last_log) <= self.eval_freq:
             return True
+        if self.model.policy.meta_policy.initialization.available_options < 2:
+            return True
         self.last_log = self.num_timesteps
 
         stable_baselines3.common.evaluation.evaluate_policy(
