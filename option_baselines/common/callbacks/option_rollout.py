@@ -38,6 +38,8 @@ class OptionRollout(callbacks.EvalCallback):
         os.makedirs(os.path.abspath("videos"), exist_ok=True)
 
     def _on_step(self) -> bool:
+        if self.eval_freq is None:
+            return True
         if (self.num_timesteps - self.last_log) <= self.eval_freq:
             return True
         if self.model.policy.meta_policy.initialization.available_options < 2:
