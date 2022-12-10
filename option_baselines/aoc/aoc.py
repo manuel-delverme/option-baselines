@@ -312,7 +312,7 @@ class AOC(OnPolicyAlgorithm):
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
 
-    def loss_fn(self, locals_, globals_):
+    def loss_fn(self, locals_, globals_) -> torch.Tensor:
         loss = 0
         loss += locals_["policy_loss"]
         loss += locals_["meta_policy_loss"]
