@@ -287,6 +287,11 @@ class AOC(OnPolicyAlgorithm):
 
             # Clip grad norm
             grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+            if torch.isnan(grad_norm.sum()):
+                import pydevd_pycharm
+                pydevd_pycharm.settrace('localhost', port=12345, stdoutToServer=True, stderrToServer=True)
+                print("grad_norm is nan")
+                raise ValueError
             self.policy.optimizer.step()
 
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())

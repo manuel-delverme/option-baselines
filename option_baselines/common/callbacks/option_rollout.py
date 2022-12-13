@@ -74,4 +74,4 @@ class OptionRollout(callbacks.EvalCallback):
         env_idx = locals_["i"]
         env = locals_["env"].envs[env_idx]
         current_option = options[env_idx]
-        self.option_frames[int(current_option)].append(env.render("rgb_array", highlight=False))
+        self.option_frames[int(current_option)].append(env.render("rgb_array"))
