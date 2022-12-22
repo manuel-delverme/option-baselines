@@ -1,4 +1,5 @@
-from typing import Any, Dict, Optional, Type, Union, Tuple
+import collections
+from typing import Any, Dict, Optional, Type, Union, Tuple, List, Mapping
 
 import gym
 import numpy as np
@@ -7,7 +8,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from stable_baselines3.common.utils import explained_variance, obs_as_tensor
+from stable_baselines3.common.utils import explained_variance, obs_as_tensor, get_schedule_fn, update_learning_rate
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
 
@@ -22,13 +23,13 @@ class AOC(OnPolicyAlgorithm):
 
     def __init__(
             self,
-            meta_policy: Union[str, Type[ActorCriticPolicy]],
+            meta_policy: Type[ActorCriticPolicy],
             policy: Union[str, Type[ActorCriticPolicy]],
-            termination_class: "option_baselines.aoc.policies.Termination",
+            termination_class: Type["option_baselines.aoc.policies.Termination"],
 
             env: Union[GymEnv, str],
             num_options: int,
-            learning_rate: Union[float, Schedule] = 7e-4,
+            learning_rate: None = None,
             n_steps: int = 5,
             gamma: float = 0.99,
             gae_lambda: float = 1.0,
@@ -59,6 +60,9 @@ class AOC(OnPolicyAlgorithm):
         """
         This class wraps meta-policy and option-policies into a single policy-like object.
         """
+        if learning_rate is not None:
+            raise ValueError("Learning rate is not supported. Use optimizer_kwargs for options and meta-policy.")
+
         super(AOC, self).__init__(
             policy,
             env,
@@ -85,7 +89,7 @@ class AOC(OnPolicyAlgorithm):
             ),
         )
         self.meta_policy_class = meta_policy
-        self.termination_class = termination_class
+        self.termination_class: Type[option_baselines.aoc.policies.Termination] = termination_class
 
         self.optimizer_kwargs = optimizer_kwargs
         self.meta_policy_kwargs = meta_policy_kwargs
@@ -98,6 +102,7 @@ class AOC(OnPolicyAlgorithm):
         self.offpolicy_learning = offpolicy_learning
         self.num_options = num_options
         self._last_options = torch.full(size=(env.num_envs,), fill_value=constants.NO_OPTIONS)
+        self.lr_schedule = Exception("You are looking for either meta_policy_lr_schedule or option_lr_schedule")
 
         # Update optimizer inside the policy if we want to use RMSProp
         # (original implementation) rather than Adam
@@ -216,6 +221,9 @@ class AOC(OnPolicyAlgorithm):
 
         return True
 
+    def _update_learning_rate(self, optimizers: List[torch.optim.Optimizer]) -> None:
+        return
+
     def train(self) -> None:
         """
         Update policy using the currently gathered
@@ -332,7 +340,8 @@ class AOC(OnPolicyAlgorithm):
         meta_advantages = locals_["meta_advantages"]
         termination_probs = locals_["termination_probs"]
 
-        margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
+        margin_loss = ((
+                               meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
         termination_loss = termination_probs.mean()
         self.logger.record("train/margin_loss", margin_loss.item())
         self.logger.record("train/termination_loss", termination_loss.item())
@@ -344,10 +353,17 @@ class AOC(OnPolicyAlgorithm):
     def auxiliary_loss(self, locals_, globals_):
         return 0.0
 
+    def _setup_lr_schedule(self) -> None:
+        option_learning_rate = self.policy_kwargs.pop("learning_rate")
+        meta_learning_rate = self.meta_policy_kwargs.pop("learning_rate")
+
+        self.option_lr_schedule = get_schedule_fn(option_learning_rate)
+        self.meta_lr_schedule = get_schedule_fn(meta_learning_rate)
+
     def _setup_model(self) -> None:
         """
         Setup:
-        - learning rate schedule
+        # - learning rate schedule
         - random seed
         - rollout buffer
         - option-policies
@@ -371,21 +387,49 @@ class AOC(OnPolicyAlgorithm):
         for _ in range(self.num_options):
             policies.append(
                 self.policy_class(
-                    self.observation_space, self.action_space, self.lr_schedule, **self.policy_kwargs
+                    self.observation_space, self.action_space, self.option_lr_schedule, **self.policy_kwargs
                 ).to(self.device)
             )
 
         option_space = gym.spaces.Discrete(self.num_options)
         meta_policy = self.meta_policy_class(
-            self.observation_space, option_space, self.lr_schedule, **self.meta_policy_kwargs
+            self.observation_space, option_space, self.meta_lr_schedule, **self.meta_policy_kwargs
         ).to(self.device)
 
         terminations = self.termination_class(
             self.observation_space,
             num_options=self.num_options,
+            lr_schedule=self.option_lr_schedule,  # Termination should follow the meta policy but it goes to infinity too quickly
             **self.termination_kwargs
         ).to(self.device)
-        self.policy = OptionNet(policies, meta_policy, terminations, self.lr_schedule, num_agents=self.n_envs, **self.optimizer_kwargs)
+        self.policy = OptionNet(policies, meta_policy, terminations, num_agents=self.n_envs)
+
+
+class OptimizerGroup:
+    def __init__(self, optimizers):
+        self.optimizers = optimizers
+
+    def zero_grad(self):
+        for optimizer in self.optimizers:
+            optimizer.zero_grad()
+
+    def step(self):
+        for optimizer in self.optimizers:
+            optimizer.step()
+
+    def state_dict(self):
+        return [optimizer.state_dict() for optimizer in self.optimizers]
+
+    def load_state_dict(self, state_dicts: Mapping[str, Any], strict: bool = True):
+        for optimizer, state_dict in zip(self.optimizers, state_dicts):
+            try:
+                optimizer.load_state_dict(state_dict, strict=strict)
+            except TypeError:
+                optimizer.load_state_dict(state_dict)
+
+    def reset(self):
+        for optimizer in self.optimizers:
+            optimizer.__setstate__({'state': collections.defaultdict(dict)})
 
 
 class OptionNet(torch.nn.Module):
@@ -394,37 +438,28 @@ class OptionNet(torch.nn.Module):
             policies: torch.nn.ModuleList,
             meta_policy: torch.nn.Module,
             termination: torch.nn.Module,
-            lr,
-            optimizer_class,
-            optimizer_kwargs,
             num_agents,
     ):
         super(OptionNet, self).__init__()
         self.policies = policies
         self.meta_policy = meta_policy
         self.terminations = termination
-        self.terminations_optimizer = optimizer_class(self.terminations.parameters(), lr(0), **optimizer_kwargs)
+
+        self.sub_modules = [*self.policies, self.meta_policy, self.terminations]
+        self.optimizer = OptimizerGroup([sm.optimizer for sm in self.sub_modules])
 
         param_groups = []
         tracked_params = set()
-        for pg in self.meta_policy.optimizer.param_groups:
-            pg["name"] = "meta_policy"
-            param_groups.append(pg)
-            tracked_params.update(pg["params"])
 
-        for pg in self.terminations_optimizer.param_groups:
-            pg["name"] = "terminations"
-            param_groups.append(pg)
-            tracked_params.update(pg["params"])
-
-        for idx, policy in enumerate(self.policies):
-            for pg in policy.optimizer.param_groups:
-                pg["name"] = f"option_policy{idx}"
-                param_groups.append(pg)
-                tracked_params.update(pg["params"])
+        for module in self.sub_modules:
+            for group in module.optimizer.param_groups:
+                group["name"] = module.__class__.__name__
+                for param in group["params"]:
+                    if param not in tracked_params:
+                        param_groups.append(group)
+                        tracked_params.add(param)
 
         assert not [p for p in self.parameters() if p not in tracked_params and p.requires_grad]
-        self.optimizer = optimizer_class(param_groups, lr(0), **optimizer_kwargs)
 
         self.num_options = len(self.policies)
         self.executing_option = torch.full((num_agents,), constants.NO_OPTIONS)

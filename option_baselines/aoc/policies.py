@@ -1,13 +1,16 @@
-from typing import List, Tuple, Type
+from typing import List, Tuple, Type, Dict, Any
 
 import gym
 import torch.distributions
 from stable_baselines3.common import policies
 from stable_baselines3.common import torch_layers
 from stable_baselines3.common.torch_layers import CombinedExtractor
+from stable_baselines3.common.type_aliases import Schedule
 from torch import nn
 
 from option_baselines.common import constants
+
+policies.ActorCriticPolicy
 
 
 class Termination(policies.BaseModel):
@@ -16,8 +19,11 @@ class Termination(policies.BaseModel):
             observation_space: gym.spaces.Space,
             net_arch: List[int],
             features_extractor_class: Type[CombinedExtractor],
+            optimizer_class: Type[torch.optim.Optimizer],
+            optimizer_kwargs: Dict[str, Any],
             features_extractor_kwargs: dict,
             num_options: int,
+            lr_schedule: Schedule,
             activation_fn: Type[nn.Module] = nn.ReLU,
             normalize_images: bool = True,
     ):
@@ -36,8 +42,14 @@ class Termination(policies.BaseModel):
         for idx in range(num_options):
             q_net = torch_layers.create_mlp(self.features_extractor.features_dim, 1, net_arch, activation_fn)
             q_net = nn.Sequential(*q_net, nn.Sigmoid())
-
             self.option_terminations.append(q_net)
+
+        self.optimizer_kwargs = optimizer_kwargs
+        self.optimizer_class = optimizer_class
+
+        # This should be in build, but I'd like to deprecate build
+
+        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)
 
     def forward(self, observation: torch.Tensor, executing_option) -> Tuple[torch.Tensor, ...]:
         assert (torch.bitwise_or(executing_option < self.num_options, executing_option == constants.NO_OPTIONS)).all()
@@ -63,3 +75,7 @@ class Termination(policies.BaseModel):
             termination_prob[:, option_idx] = termination_net(features).squeeze()
             option_termination[:, option_idx] = torch.distributions.Bernoulli(termination_prob[:, option_idx]).sample()
         return option_termination.numpy().astype(dtype=bool), termination_prob
+
+    def _update_learning_rate(self, current_progress_remaining) -> None:
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = self.lr_schedule(current_progress_remaining)
