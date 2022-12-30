@@ -3,19 +3,18 @@ from typing import Any, Dict, Optional, Type, Union, Tuple, List, Mapping
 
 import gym
 import numpy as np
+import option_baselines.aoc
+import option_baselines.aoc.policies
 import torch
+from option_baselines.common import buffers
+from option_baselines.common import constants
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from stable_baselines3.common.utils import explained_variance, obs_as_tensor, get_schedule_fn, update_learning_rate
+from stable_baselines3.common.type_aliases import GymEnv
+from stable_baselines3.common.utils import explained_variance, obs_as_tensor, get_schedule_fn
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
-
-import option_baselines.aoc
-import option_baselines.aoc.policies
-from option_baselines.common import buffers
-from option_baselines.common import constants
 
 
 class AOC(OnPolicyAlgorithm):
