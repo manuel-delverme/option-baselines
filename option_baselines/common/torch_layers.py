@@ -37,3 +37,24 @@ class SimpleCNN(torch_layers.BaseFeaturesExtractor):
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
         return self.linear(self.cnn(observations))
+
+
+class FakeOptimizer:
+    def step(self):
+        pass
+
+    def zero_grad(self):
+        pass
+
+    @property
+    def param_groups(self):
+        return []
+
+    def state_dict(self):
+        return {}
+
+    def __setstate__(self, state):
+        pass
+
+    def load_state_dict(self, *args, **kwargs):
+        pass

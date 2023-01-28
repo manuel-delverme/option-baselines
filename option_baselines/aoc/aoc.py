@@ -3,11 +3,7 @@ from typing import Any, Dict, Optional, Type, Union, Tuple, List, Mapping
 
 import gym
 import numpy as np
-import option_baselines.aoc
-import option_baselines.aoc.policies
 import torch
-from option_baselines.common import buffers
-from option_baselines.common import constants
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -15,6 +11,11 @@ from stable_baselines3.common.type_aliases import GymEnv
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor, get_schedule_fn
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
+
+import option_baselines.aoc
+import option_baselines.aoc.policies
+from option_baselines.common import buffers
+from option_baselines.common import constants
 
 
 class AOC(OnPolicyAlgorithm):
@@ -257,11 +258,16 @@ class AOC(OnPolicyAlgorithm):
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             meta_advantages = rollout_data.option_advantages
+
             if self.normalize_advantage:
                 meta_advantages = (meta_advantages - meta_advantages.mean()) / (meta_advantages.std() + 1e-8)
 
-            # Policy gradient loss
+            # torch.exp(action_log_prob - rollout_data.old_log_prob) * advantages
+
             policy_loss = -(advantages * action_log_prob).mean()
+
+            meta_log_prob = torch.clamp(meta_log_prob, -10, 10)
+
             if self.offpolicy_learning:
                 meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
             else:
@@ -293,10 +299,25 @@ class AOC(OnPolicyAlgorithm):
             loss.backward()
 
             # Clip grad norm
+            grad_means = {}
+            gradz = []
+            with torch.no_grad():
+                for k, v in self.policy.named_children():
+                    child_grads = [(g.detach().abs().mean(), f"{k}.{kj}") for kj, g in v.named_parameters() if g.grad is not None]
+                    if not child_grads:
+                        continue
+
+                    gradz.extend(child_grads)
+                    grads = [g.item() for g, _ in child_grads]
+                    grad_means[k] = torch.mean(torch.tensor(grads))
+                sorted(gradz)
+                if any([torch.isnan(v) for v in grad_means.values()]):
+                    print("grad_mean is nan")
+                    raise ValueError("grad_mean is nan")
+
             grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            if torch.isnan(grad_norm.sum()):
-                print("grad_norm is nan")
-                raise ValueError("grad_norm is nan")
+            assert not list(self.policy.parameters(recurse=False)), "Found parameters not in any child module"
+
             self.policy.optimizer.step()
 
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
@@ -307,6 +328,9 @@ class AOC(OnPolicyAlgorithm):
         self.logger.record("train/entropy_loss", entropy_loss.item())
         self.logger.record("train/meta_entropy_loss", meta_entropy_loss.item())
         self.logger.record("train/grad_norm", grad_norm)
+        for k, v in grad_means.items():
+            self.logger.record("grad_mean/" + k, v.item())
+
         self.logger.record("train/policy_loss", policy_loss.item())
         self.logger.record("train/value_loss", value_loss.item())
         self.logger.record("train/meta_policy_loss", meta_policy_loss.item())
