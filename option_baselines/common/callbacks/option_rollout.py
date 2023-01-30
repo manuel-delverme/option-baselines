@@ -3,7 +3,6 @@ import os
 from typing import Any, Dict
 from typing import Optional, Union
 
-import cv2
 import gym
 import numpy as np
 import stable_baselines3.common.evaluation
@@ -58,6 +57,7 @@ class OptionRollout(callbacks.EvalCallback):
         )
         print(f"Parsing options: {len(self.option_frames)}, timestep: {self.num_timesteps}")
 
+        import cv2
         for k, frames in self.option_frames.items():
             video_path = self.eval_env.video_folder + f"/{self.num_timesteps}_option{k}_rollout"
             img = 255 - np.stack(frames).mean(axis=0).astype(np.uint8)
