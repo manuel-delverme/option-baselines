@@ -18,7 +18,7 @@ from option_baselines.common import buffers
 from option_baselines.common import constants
 
 
-class AOC(OnPolicyAlgorithm):
+class PPOO(OnPolicyAlgorithm):
     rollout_buffer: Union[buffers.OptionRolloutBuffer, buffers.DictOptionRolloutBuffer]
 
     def __init__(
@@ -63,7 +63,7 @@ class AOC(OnPolicyAlgorithm):
         if learning_rate is not None:
             raise ValueError("Learning rate is not supported. Use optimizer_kwargs for options and meta-policy.")
 
-        super(AOC, self).__init__(
+        super(PPOO, self).__init__(
             policy,
             env,
             learning_rate=learning_rate,
@@ -231,113 +231,144 @@ class AOC(OnPolicyAlgorithm):
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
 
-        # This will only loop once (get all data in one go)
-        for rollout_data in self.rollout_buffer.get(batch_size=None):
-            actions = rollout_data.actions
-            if isinstance(self.action_space, gym.spaces.Discrete):
-                # Convert discrete action from float to long
-                actions = actions.long().flatten()
+        entropy_losses = []
+        pg_losses, action_value_losses = [], []
+        clip_fractions = []
+        continue_training = True
 
-            previous_options = rollout_data.previous_options
-            current_options = rollout_data.current_options
+        self.n_epochs = 5
+        self.batch_size = 256
+        self.clip_range = 0.2
 
-            observations = rollout_data.observations
+        # train for n_epochs epochs
+        for epoch in range(self.n_epochs):
+            approx_kl_divs = []
+            # Do a complete pass on the rollout buffer
+            for rollout_data in self.rollout_buffer.get(self.batch_size):
+                actions = rollout_data.actions
+                if isinstance(self.action_space, gym.spaces.Discrete):
+                    # Convert discrete action from float to long
+                    actions = actions.long().flatten()
 
-            (meta_values, meta_log_prob, meta_entropy), (action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(
-                observations, current_options, actions)
-            _, termination_probs = self.policy.terminations(observations, previous_options)
-            action_values, meta_values = action_values.flatten(), meta_values.flatten()
+                previous_options = rollout_data.previous_options
+                current_options = rollout_data.current_options
 
-            # Normalize advantage (not present in the original implementation)
-            advantages = rollout_data.advantages
-            if self.normalize_advantage:
-                advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                observations = rollout_data.observations
 
-            meta_advantages = rollout_data.option_advantages
+                (meta_values, meta_log_prob, meta_entropy), (action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(
+                    observations, current_options, actions)
+                _, termination_probs = self.policy.terminations(observations, previous_options)
+                action_values, meta_values = action_values.flatten(), meta_values.flatten()
 
-            if self.normalize_advantage:
-                meta_advantages = (meta_advantages - meta_advantages.mean()) / (meta_advantages.std() + 1e-8)
+                # Normalize advantage (not present in the original implementation)
+                advantages = rollout_data.advantages
+                if self.normalize_advantage:
+                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            # torch.exp(action_log_prob - rollout_data.old_log_prob) * advantages
+                meta_advantages = rollout_data.option_advantages
 
-            policy_loss = -(advantages * action_log_prob).mean()
+                if self.normalize_advantage:
+                    meta_advantages = (meta_advantages - meta_advantages.mean()) / (meta_advantages.std() + 1e-8)
 
-            meta_log_prob = torch.clamp(meta_log_prob, -10, 10)
+                ratio = torch.exp(action_log_prob - rollout_data.old_log_prob)
+                # torch.exp(action_log_prob - rollout_data.old_log_prob) * advantages
+                policy_loss_1 = advantages * ratio
+                policy_loss_2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+                policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
 
-            if self.offpolicy_learning:
-                meta_policy_loss = -(meta_advantages * meta_log_prob).mean()
-            else:
-                controllable_meta_advantages = torch.einsum("b,b->b", termination_probs.detach(), meta_advantages)
-                meta_entropy = torch.einsum("b,b->b", termination_probs.detach(), meta_entropy)
-                meta_policy_loss = -(controllable_meta_advantages * meta_log_prob).mean()
+                # policy_loss = -(advantages * action_log_prob).mean()
+                meta_log_prob = torch.clamp(meta_log_prob, -10, 10)
 
-            value_loss = F.mse_loss(rollout_data.returns, action_values)
+                pg_losses.append(policy_loss.item())
+                clip_fraction = torch.mean((torch.abs(ratio - 1) > self.clip_range).float()).item()
+                clip_fractions.append(clip_fraction)
 
-            if self.offpolicy_learning:
-                meta_value_loss = F.mse_loss(rollout_data.option_returns, meta_values)
-            else:
-                value_error = rollout_data.option_returns - meta_values
-                weighted_value_error = torch.einsum("b,b->b", termination_probs.detach(), value_error)
-                meta_value_loss = weighted_value_error.pow(2).mean()
+                if self.offpolicy_learning:
+                    raise NotImplementedError
+                else:
+                    controllable_meta_advantages = torch.einsum("b,b->b", termination_probs.detach(), meta_advantages)
+                    meta_entropy = torch.einsum("b,b->b", termination_probs.detach(), meta_entropy)
+                    meta_policy_loss = -(controllable_meta_advantages * meta_log_prob).mean()
 
-            # Entropy loss favor exploration, approximate entropy when no analytical form
-            meta_entropies = -meta_log_prob if meta_entropy is None else meta_entropy
-            entropies = -action_log_prob if entropy is None else entropy
+                value_loss = F.mse_loss(rollout_data.returns, action_values)
+                action_value_losses.append(value_loss.item())
 
-            meta_entropy_loss = -torch.mean(meta_entropies * self.meta_ent_coef)
-            entropy_loss = -torch.mean(entropies * self.ent_coef)
+                if self.offpolicy_learning:
+                    raise NotImplementedError
+                else:
+                    value_error = rollout_data.option_returns - meta_values
+                    weighted_value_error = torch.einsum("b,b->b", termination_probs.detach(), value_error)
+                    meta_value_loss = weighted_value_error.pow(2).mean()
 
-            # Option loss
-            loss = self.loss_fn(locals(), globals())
+                # Entropy loss favor exploration, approximate entropy when no analytical form
+                meta_entropies = -meta_log_prob if meta_entropy is None else meta_entropy
+                entropies = -action_log_prob if entropy is None else entropy
 
-            # Optimization step
-            self.policy.optimizer.zero_grad()
-            loss.backward()
+                meta_entropy_loss = -torch.mean(meta_entropies * self.meta_ent_coef)
+                entropy_loss = -torch.mean(entropies * self.ent_coef)
 
-            # Clip grad norm
-            grad_means = {}
-            gradz = []
-            with torch.no_grad():
-                for k, v in self.policy.named_children():
-                    child_grads = [(g.detach().abs().mean(), f"{k}.{kj}") for kj, g in v.named_parameters() if g.grad is not None]
-                    if not child_grads:
-                        continue
+                # Option loss
+                loss = self.loss_fn(locals(), globals())
 
-                    gradz.extend(child_grads)
-                    grads = [g.item() for g, _ in child_grads]
-                    grad_means[k] = torch.mean(torch.tensor(grads))
-                sorted(gradz)
-                if any([torch.isnan(v) for v in grad_means.values()]):
-                    print("grad_mean is nan")
-                    raise ValueError("grad_mean is nan")
+                # Calculate approximate form of reverse KL Divergence for early stopping
+                # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
+                # and discussion in PR #419: https://github.com/DLR-RM/stable-baselines3/pull/419
+                # and Schulman blog: http://joschu.net/blog/kl-approx.html
+                with torch.no_grad():
+                    log_ratio = action_log_prob - rollout_data.old_log_prob
+                    approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
+                    approx_kl_divs.append(approx_kl_div)
 
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            assert not list(self.policy.parameters(recurse=False)), "Found parameters not in any child module"
+                # Optimization step
+                self.policy.optimizer.zero_grad()
+                loss.backward()
 
-            self.policy.optimizer.step()
+                # Clip grad norm
+                grad_means = {}
+                gradz = []
+                with torch.no_grad():
+                    for k, v in self.policy.named_children():
+                        child_grads = [(g.detach().abs().mean(), f"{k}.{kj}") for kj, g in v.named_parameters() if g.grad is not None]
+                        if not child_grads:
+                            continue
 
+                        gradz.extend(child_grads)
+                        grads = [g.item() for g, _ in child_grads]
+                        grad_means[k] = torch.mean(torch.tensor(grads))
+
+                    if any([torch.isnan(v) for v in grad_means.values()]):
+                        print("grad_mean is nan")
+                        raise ValueError("grad_mean is nan")
+
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                assert not list(self.policy.parameters(recurse=False)), "Found parameters not in any child module"
+
+                self.policy.optimizer.step()
+
+        self._n_updates += self.n_epochs
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
         self._n_updates += 1
+
+        self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
+        self.logger.record("train/value_loss", np.mean(action_value_losses))
+        self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
+        self.logger.record("train/clip_fraction", np.mean(clip_fractions))
+
         # self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        # self.logger.record("train/explained_variance", explained_var)
-        self.logger.record("train/entropy_loss", entropy_loss.item())
-        self.logger.record("train/meta_entropy_loss", meta_entropy_loss.item())
+        self.logger.record("entropy/option", entropy_loss.item())
+        self.logger.record("entropy/meta", meta_entropy_loss.item())
+
         self.logger.record("train/grad_norm", grad_norm)
         for k, v in grad_means.items():
             self.logger.record("grad_mean/" + k, v.item())
 
         self.logger.record("train/policy_loss", policy_loss.item())
         self.logger.record("train/value_loss", value_loss.item())
-        self.logger.record("train/meta_policy_loss", meta_policy_loss.item())
-        self.logger.record("train/meta_value_loss", meta_value_loss.item())
-        self.logger.record("train/meta_advantages", meta_advantages.mean().item())
         self.logger.record("train/advantages", advantages.mean().item())
-        adv_sim = torch.cosine_similarity(
-            torch.tensor(self.rollout_buffer.advantages.flatten()),
-            torch.tensor(self.rollout_buffer.option_advantages.flatten()), 0, eps=1e-12)
-
-        self.logger.record("train/advantages_similarity", adv_sim)
+        self.logger.record("meta_train/policy_loss", meta_policy_loss.item())
+        self.logger.record("meta_train/value_loss", meta_value_loss.item())
+        self.logger.record("meta_train/advantages", meta_advantages.mean().item())
 
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
