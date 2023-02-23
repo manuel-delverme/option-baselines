@@ -236,10 +236,10 @@ class PPOO(OnPolicyAlgorithm):
         clip_fractions = []
         continue_training = True
 
-        self.n_epochs = 5
-        self.batch_size = 256
+        self.batch_size = 64
+        self.n_epochs = (1 * self.rollout_buffer.actions.size) // self.batch_size
+        assert self.n_epochs > 0, "Not enough data to train on"
         self.clip_range = 0.2
-
         # train for n_epochs epochs
         for epoch in range(self.n_epochs):
             approx_kl_divs = []
