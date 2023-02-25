@@ -362,8 +362,8 @@ class PPOO(OnPolicyAlgorithm):
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
 
         # self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("entropy/option", entropies.mean().item())
-        self.logger.record("entropy/meta", meta_entropies.mean().item())
+        self.logger.record("entropy/option", -entropies.mean().item())
+        self.logger.record("entropy/meta", -meta_entropies.mean().item())
 
         self.logger.record("train/grad_norm", grad_norm)
         for k, v in grad_means.items():
