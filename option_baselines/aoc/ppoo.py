@@ -29,6 +29,9 @@ class PPOO(OnPolicyAlgorithm):
 
             env: Union[GymEnv, str],
             num_options: int,
+            batch_size: int,
+            n_epochs: int,
+            clip_range: float,
             learning_rate: None = None,
             n_steps: int = 5,
             gamma: float = 0.99,
@@ -94,6 +97,10 @@ class PPOO(OnPolicyAlgorithm):
         self.optimizer_kwargs = optimizer_kwargs
         self.meta_policy_kwargs = meta_policy_kwargs
         self.termination_kwargs = termination_kwargs
+
+        self.batch_size = batch_size
+        self.n_epochs = n_epochs
+        self.clip_range = clip_range
 
         self.term_coef = term_coef
         self.meta_ent_coef = meta_ent_coef
@@ -236,12 +243,11 @@ class PPOO(OnPolicyAlgorithm):
         clip_fractions = []
         continue_training = True
 
-        self.batch_size = 64
-        self.n_epochs = (1 * self.rollout_buffer.actions.size) // self.batch_size
+        self.n_batches = (self.n_epochs * self.rollout_buffer.actions.size) // self.batch_size
+
         assert self.n_epochs > 0, "Not enough data to train on"
-        self.clip_range = 0.2
         # train for n_epochs epochs
-        for epoch in range(self.n_epochs):
+        for epoch in range(self.n_batches):
             approx_kl_divs = []
             # Do a complete pass on the rollout buffer
             for rollout_data in self.rollout_buffer.get(self.batch_size):
@@ -356,8 +362,8 @@ class PPOO(OnPolicyAlgorithm):
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
 
         # self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("entropy/option", entropy_loss.item())
-        self.logger.record("entropy/meta", meta_entropy_loss.item())
+        self.logger.record("entropy/option", entropies.mean().item())
+        self.logger.record("entropy/meta", meta_entropies.mean().item())
 
         self.logger.record("train/grad_norm", grad_norm)
         for k, v in grad_means.items():
