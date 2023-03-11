@@ -144,6 +144,7 @@ class PPOO(OnPolicyAlgorithm):
         dones = self._last_episode_starts
 
         while n_steps < n_rollout_steps:
+            print("progress: ", n_steps, "/", n_rollout_steps)
             with torch.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
@@ -217,6 +218,7 @@ class PPOO(OnPolicyAlgorithm):
             value_upon_arrival = termination_value + continuation_value
             value_upon_arrival[dones] = 0
 
+        print("Computing returns and advantages...")
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_value_upon_arrival=value_upon_arrival,
                                                      option_termination_probs=termination_probs)
 
