@@ -49,7 +49,8 @@ class OptionRolloutBuffer(buffers.RolloutBuffer):
         # self.termination_probs = None
         self.option_advantages = None
         self.option_returns = None
-        assert all(hasattr(self, name) for name in self._meta_tensor_names), "All tensor names must be defined in both _meta_tensor_names and the class __init__, sorry"
+        assert all(hasattr(self, name) for name in
+                   self._meta_tensor_names), "All tensor names must be defined in both _meta_tensor_names and the class __init__, sorry"
         super().__init__(*args, **kwargs)
 
     def reset(self):
@@ -111,7 +112,8 @@ class OptionRolloutBuffer(buffers.RolloutBuffer):
         yield from super().get(batch_size)
 
     def compute_returns_and_advantage(
-            self, last_values: torch.Tensor, dones: np.ndarray, last_value_upon_arrival: Optional[torch.Tensor] = None, option_termination_probs: Optional[torch.Tensor] = None,
+            self, last_values: torch.Tensor, dones: np.ndarray, last_value_upon_arrival: Optional[torch.Tensor] = None,
+            option_termination_probs: Optional[torch.Tensor] = None,
     ) -> None:
         super().compute_returns_and_advantage(last_values, dones)
 
@@ -154,7 +156,8 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         # self.termination_probs = None
         self.option_advantages = None
         self.option_returns = None
-        assert all(hasattr(self, name) for name in self._meta_tensor_names), "All tensor names must be defined in both _meta_tensor_names and the class __init__, sorry"
+        assert all(hasattr(self, name) for name in
+                   self._meta_tensor_names), "All tensor names must be defined in both _meta_tensor_names and the class __init__, sorry"
         super().__init__(*args, **kwargs)
 
     def reset(self):
@@ -190,19 +193,26 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
             meta_value: Optional[torch.Tensor] = None,
             option_log_prob: Optional[torch.Tensor] = None,
     ) -> None:
-        previous_option = torch.full_like(self.previous_options[self.pos], np.nan) if previous_option is None else previous_option
-        current_option = torch.full_like(self.current_options[self.pos], np.nan) if current_option is None else current_option
-        meta_value = torch.full(self.meta_values[self.pos].shape, torch.nan) if meta_value is None else meta_value
-        option_log_prob = (
-            torch.full(self.option_log_probs[self.pos].shape, torch.nan) if option_log_prob is None else option_log_prob
-        )
+        device = value.device
+        if previous_option is None:
+            previous_option = torch.full_like(self.previous_options[self.pos], np.nan, device=device)
+
+        if current_option is None:
+            current_option = torch.full_like(self.current_options[self.pos], np.nan, device=device)
+
+        if meta_value is None:
+            meta_value = torch.full(self.meta_values[self.pos].shape, torch.nan, device=device)
+
+        if option_log_prob is None:
+            option_log_prob = torch.full(self.option_log_probs[self.pos].shape, torch.nan, device=device)
+
         assert len(option_log_prob.shape) > 0, "option_log_prob can not be 0d"
         assert len(log_prob.shape) > 0, "log_prob2 can not be 0d"
         assert (current_option >= 0).all()
         assert torch.bitwise_or(previous_option >= 0, torch.isnan(previous_option)).all()
 
-        self.previous_options[self.pos] = previous_option.numpy().copy()
-        self.current_options[self.pos] = current_option.numpy().copy()
+        self.previous_options[self.pos] = previous_option.cpu().numpy().copy()
+        self.current_options[self.pos] = current_option.cpu().numpy().copy()
 
         self.meta_values[self.pos] = meta_value.clone().cpu().numpy().flatten()
         self.option_log_probs[self.pos] = option_log_prob.clone().cpu().numpy().squeeze()
@@ -216,7 +226,8 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         yield from super(DictOptionRolloutBuffer, self).get(batch_size)
 
     def compute_returns_and_advantage(
-            self, last_values: torch.Tensor, dones: np.ndarray, last_value_upon_arrival: Optional[torch.Tensor] = None, option_termination_probs: Optional[torch.Tensor] = None,
+            self, last_values: torch.Tensor, dones: np.ndarray, last_value_upon_arrival: Optional[torch.Tensor] = None,
+            option_termination_probs: Optional[torch.Tensor] = None,
     ) -> None:
         super(DictOptionRolloutBuffer, self).compute_returns_and_advantage(last_values, dones)
 

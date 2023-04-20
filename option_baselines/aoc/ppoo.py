@@ -518,7 +518,8 @@ class OptionNet(torch.nn.Module):
         assert not [p for p in self.parameters() if p not in tracked_params and p.requires_grad]
 
         self.num_options = len(self.policies)
-        self.executing_option = torch.full((num_agents,), constants.NO_OPTIONS)
+        device = next(self.parameters()).device
+        self.executing_option = torch.full((num_agents,), constants.NO_OPTIONS, dtype=torch.long, device=device)
 
     def set_training_mode(self, training_mode):
         self.policies.train(training_mode)
@@ -562,7 +563,7 @@ class OptionNet(torch.nn.Module):
     def predict_values(self, observation, executing_option):
         meta_values = self.meta_policy.predict_values(observation)
 
-        values = torch.full(executing_option.shape, float("nan"))
+        values = torch.full(executing_option.shape, float("nan"), device=executing_option.device)
         for option_idx, policy in enumerate(self.policies):
             option_mask = executing_option == option_idx
             if not option_mask.any():
@@ -580,9 +581,9 @@ class OptionNet(torch.nn.Module):
         meta_values, meta_log_probs, meta_entropies = self.meta_policy.evaluate_actions(observation, options)
 
         entropies, values, log_probs = (
-            torch.full(actions.shape, float("nan")),
-            torch.full(actions.shape, float("nan")),
-            torch.full(actions.shape, float("nan")),
+            torch.full(actions.shape, float("nan"), device=actions.device),
+            torch.full(actions.shape, float("nan"), device=actions.device),
+            torch.full(actions.shape, float("nan"), device=actions.device),
         )
 
         for option_idx, policy in enumerate(self.policies):
