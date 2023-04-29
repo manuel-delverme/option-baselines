@@ -8,7 +8,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv
-from stable_baselines3.common.utils import explained_variance, obs_as_tensor, get_schedule_fn
+from stable_baselines3.common import utils as sb3_utils
 from stable_baselines3.common.vec_env import VecEnv
 from torch.nn import functional as F
 
@@ -32,11 +32,12 @@ class PPOO(OnPolicyAlgorithm):
             batch_size: int,
             n_epochs: int,
             clip_range: float,
+            initial_ent_coef: float,
+            final_ent_coef: float,
             learning_rate: None = None,
             n_steps: int = 5,
             gamma: float = 0.99,
             gae_lambda: float = 1.0,
-            ent_coef: float = 0.0,
             meta_ent_coef: float = 0.0,
             term_coef=0.01,
             vf_coef: float = 0.5,
@@ -73,7 +74,7 @@ class PPOO(OnPolicyAlgorithm):
             n_steps=n_steps,
             gamma=gamma,
             gae_lambda=gae_lambda,
-            ent_coef=ent_coef,
+            ent_coef=initial_ent_coef,
             vf_coef=vf_coef,
             use_sde=False,
             max_grad_norm=max_grad_norm,
@@ -111,6 +112,8 @@ class PPOO(OnPolicyAlgorithm):
         self._last_options = torch.full(size=(env.num_envs,), fill_value=constants.NO_OPTIONS)
         self.lr_schedule = Exception("You are looking for either meta_policy_lr_schedule or option_lr_schedule")
 
+        self.entropy_scheduler = sb3_utils.get_linear_fn(start=initial_ent_coef, end=final_ent_coef, end_fraction=0.5)
+
         # Update optimizer inside the policy if we want to use RMSProp
         # (original implementation) rather than Adam
         if use_rms_prop and "optimizer_class" not in self.policy_kwargs:
@@ -125,6 +128,10 @@ class PPOO(OnPolicyAlgorithm):
 
         if _init_setup_model:
             self._setup_model()
+
+    @property
+    def _ent_coef(self):
+        return self.entropy_scheduler(self._current_progress_remaining)
 
     def collect_rollouts(
             self,
@@ -146,8 +153,9 @@ class PPOO(OnPolicyAlgorithm):
         while n_steps < n_rollout_steps:
             with torch.no_grad():
                 # Convert to pytorch tensor or to TensorDict
-                obs_tensor = obs_as_tensor(self._last_obs, self.device)
-                actions, values, log_probs, options, meta_values, option_log_probs, termination_probs = self.policy(obs_tensor, dones)
+                obs_tensor = sb3_utils.obs_as_tensor(self._last_obs, self.device)
+                actions, values, log_probs, options, meta_values, option_log_probs, termination_probs = self.policy(
+                    obs_tensor, dones)
             actions = actions.cpu().numpy()
 
             # Rescale and perform action
@@ -205,7 +213,7 @@ class PPOO(OnPolicyAlgorithm):
 
         with torch.no_grad():
             # Compute value for the last time-step
-            new_obs = obs_as_tensor(new_obs, self.device)
+            new_obs = sb3_utils.obs_as_tensor(new_obs, self.device)
             values, meta_value = self.policy.predict_values(new_obs, options)
 
             # beta(S',O) * V(S')
@@ -217,7 +225,8 @@ class PPOO(OnPolicyAlgorithm):
             value_upon_arrival = termination_value + continuation_value
             value_upon_arrival[dones] = 0
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, last_value_upon_arrival=value_upon_arrival,
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones,
+                                                     last_value_upon_arrival=value_upon_arrival,
                                                      option_termination_probs=termination_probs)
 
         callback.on_rollout_end()
@@ -261,7 +270,8 @@ class PPOO(OnPolicyAlgorithm):
 
                 observations = rollout_data.observations
 
-                (meta_values, meta_log_prob, meta_entropy), (action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(
+                (meta_values, meta_log_prob, meta_entropy), (
+                    action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(
                     observations, current_options, actions)
                 _, termination_probs = self.policy.terminations(observations, previous_options)
                 action_values, meta_values = action_values.flatten(), meta_values.flatten()
@@ -334,7 +344,8 @@ class PPOO(OnPolicyAlgorithm):
                 gradz = []
                 with torch.no_grad():
                     for k, v in self.policy.named_children():
-                        child_grads = [(g.detach().abs().mean(), f"{k}.{kj}") for kj, g in v.named_parameters() if g.grad is not None]
+                        child_grads = [(g.detach().abs().mean(), f"{k}.{kj}") for kj, g in v.named_parameters() if
+                                       g.grad is not None]
                         if not child_grads:
                             continue
 
@@ -352,7 +363,8 @@ class PPOO(OnPolicyAlgorithm):
                 self.policy.optimizer.step()
 
         self._n_updates += self.n_epochs
-        explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
+        explained_var = sb3_utils.explained_variance(self.rollout_buffer.values.flatten(),
+                                                     self.rollout_buffer.returns.flatten())
 
         self._n_updates += 1
 
@@ -362,6 +374,7 @@ class PPOO(OnPolicyAlgorithm):
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
 
         # self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+        self.logger.record("entropy/entropy_coeff", self.ent_coef, self.num_timesteps)
         self.logger.record("entropy/option", -entropies.mean().item())
         self.logger.record("entropy/meta", -meta_entropies.mean().item())
 
@@ -413,8 +426,8 @@ class PPOO(OnPolicyAlgorithm):
         option_learning_rate = self.policy_kwargs.pop("learning_rate")
         meta_learning_rate = self.meta_policy_kwargs.pop("learning_rate")
 
-        self.option_lr_schedule = get_schedule_fn(option_learning_rate)
-        self.meta_lr_schedule = get_schedule_fn(meta_learning_rate)
+        self.option_lr_schedule = sb3_utils.get_schedule_fn(option_learning_rate)
+        self.meta_lr_schedule = sb3_utils.get_schedule_fn(meta_learning_rate)
 
     def _setup_model(self) -> None:
         """
@@ -430,7 +443,8 @@ class PPOO(OnPolicyAlgorithm):
         self._setup_lr_schedule()
         self.set_random_seed(self.seed)
 
-        self.rollout_buffer: buffers.DictOptionRolloutBuffer = self.buffer_cls(  # TODO(Manuel) actually this should be OptionRolloutBuffer
+        self.rollout_buffer: buffers.DictOptionRolloutBuffer = self.buffer_cls(
+            # TODO(Manuel) actually this should be OptionRolloutBuffer
             self.n_steps,
             self.observation_space,
             self.action_space,
@@ -455,7 +469,8 @@ class PPOO(OnPolicyAlgorithm):
         terminations = self.termination_class(
             self.observation_space,
             num_options=self.num_options,
-            lr_schedule=self.option_lr_schedule,  # Termination should follow the meta policy but it goes to infinity too quickly
+            lr_schedule=self.option_lr_schedule,
+            # Termination should follow the meta policy but it goes to infinity too quickly
             **self.termination_kwargs
         ).to(self.device)
         self.policy = OptionNet(policies, meta_policy, terminations, num_agents=self.n_envs)
@@ -621,7 +636,7 @@ class OptionNet(torch.nn.Module):
         """
         self.set_training_mode(False)
         meta_actions, _states = self.meta_policy.predict(observation, state, episode_start, deterministic)
-        observation = obs_as_tensor(observation, self.meta_policy.device)
+        observation = sb3_utils.obs_as_tensor(observation, self.meta_policy.device)
         meta_actions = torch.tensor(meta_actions)
 
         executing_option = state

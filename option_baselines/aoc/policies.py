@@ -63,6 +63,7 @@ class Termination(policies.BaseModel):
 
         self.optimizer_kwargs = optimizer_kwargs
         self.optimizer_class = optimizer_class
+        self.termination_bonus = torch.zeros(num_options, dtype=torch.float32)
 
         # This should be in build, but I'd like to deprecate build
 
@@ -77,7 +78,9 @@ class Termination(policies.BaseModel):
         termination_prob[executing_option == constants.NO_OPTIONS] = 0.
         for option_idx, termination_net in enumerate(self.option_terminations):
             option_mask = executing_option == option_idx
-            termination_prob[option_mask] = termination_net(features[option_mask]).squeeze()
+            termination_bonus = self.termination_bonus[option_idx]
+            termination_prob[option_mask] = termination_net(features[option_mask]).squeeze() - termination_bonus
+            termination_prob[option_mask] = torch.clamp(termination_prob[option_mask], 0., 1.)
         assert not torch.isnan(termination_prob).any()
 
         option_termination = torch.distributions.Bernoulli(termination_prob).sample()
