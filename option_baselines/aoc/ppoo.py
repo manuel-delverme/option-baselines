@@ -321,7 +321,7 @@ class PPOO(OnPolicyAlgorithm):
                 entropies = -action_log_prob if entropy is None else entropy
 
                 meta_entropy_loss = -torch.mean(meta_entropies * self.meta_ent_coef)
-                entropy_loss = -torch.mean(entropies * self.ent_coef)
+                entropy_loss = -torch.mean(entropies * self._ent_coef)
 
                 # Option loss
                 loss = self.loss_fn(locals(), globals())
@@ -374,7 +374,8 @@ class PPOO(OnPolicyAlgorithm):
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
 
         # self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("entropy/entropy_coeff", self.ent_coef, self.num_timesteps)
+        self.logger.record("entropy/entropy_coeff", self._ent_coef, self.num_timesteps)
+        print("entropy coeff", self._ent_coef)
         self.logger.record("entropy/option", -entropies.mean().item())
         self.logger.record("entropy/meta", -meta_entropies.mean().item())
 
