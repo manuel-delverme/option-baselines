@@ -375,7 +375,6 @@ class PPOO(OnPolicyAlgorithm):
 
         # self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("entropy/entropy_coeff", self._ent_coef, self.num_timesteps)
-        print("entropy coeff", self._ent_coef)
         self.logger.record("entropy/option", -entropies.mean().item())
         self.logger.record("entropy/meta", -meta_entropies.mean().item())
 
