@@ -63,6 +63,7 @@ class Termination(policies.BaseModel):
 
         self.optimizer_kwargs = optimizer_kwargs
         self.optimizer_class = optimizer_class
+        self.termination_bonus = torch.zeros(num_options, dtype=torch.float32)
 
         # This should be in build, but I'd like to deprecate build
 
@@ -72,16 +73,18 @@ class Termination(policies.BaseModel):
         assert (torch.bitwise_or(executing_option < self.num_options, executing_option == constants.NO_OPTIONS)).all()
         assert (executing_option >= 0).all()
         features = self.extract_features(observation)
-        termination_prob = torch.full((features.shape[0],), float("nan"))
+        termination_prob = torch.full((features.shape[0],), float("nan"), device=features.device, dtype=torch.float32)
 
         termination_prob[executing_option == constants.NO_OPTIONS] = 0.
         for option_idx, termination_net in enumerate(self.option_terminations):
             option_mask = executing_option == option_idx
-            termination_prob[option_mask] = termination_net(features[option_mask]).squeeze()
+            termination_bonus = self.termination_bonus[option_idx]
+            termination_prob[option_mask] = termination_net(features[option_mask]).squeeze() - termination_bonus
+            termination_prob[option_mask] = torch.clamp(termination_prob[option_mask], 0., 1.)
         assert not torch.isnan(termination_prob).any()
 
         option_termination = torch.distributions.Bernoulli(termination_prob).sample()
-        return option_termination.numpy().astype(dtype=bool), termination_prob
+        return option_termination.cpu().numpy().astype(dtype=bool), termination_prob
 
     def forward_offpolicy(self, observation: torch.Tensor) -> Tuple[torch.Tensor, ...]:
         features = self.extract_features(observation)
