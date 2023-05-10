@@ -112,7 +112,8 @@ class PPOO(OnPolicyAlgorithm):
         self._last_options = torch.full(size=(env.num_envs,), fill_value=constants.NO_OPTIONS)
         self.lr_schedule = Exception("You are looking for either meta_policy_lr_schedule or option_lr_schedule")
 
-        self.entropy_scheduler = sb3_utils.get_linear_fn(start=initial_ent_coef, end=final_ent_coef, end_fraction=0.5)
+        self.entropy_scheduler = sb3_utils.get_linear_fn(
+            start=initial_ent_coef, end=initial_ent_coef / final_ent_coef, end_fraction=0.5)
 
         # Update optimizer inside the policy if we want to use RMSProp
         # (original implementation) rather than Adam
