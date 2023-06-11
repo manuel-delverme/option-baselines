@@ -73,35 +73,14 @@ class Termination(policies.BaseModel):
         assert (torch.bitwise_or(executing_option < self.num_options, executing_option == constants.NO_OPTIONS)).all()
         assert (executing_option >= 0).all()
         features = self.extract_features(observation)
-        termination_prob = torch.full((features.shape[0],), float("nan"), device=features.device, dtype=torch.float32)
+        termination_prob = torch.full((features.shape[0],), float("inf"), device=features.device, dtype=torch.float32)
 
         termination_prob[executing_option == constants.NO_OPTIONS] = 0.
         for option_idx, termination_net in enumerate(self.option_terminations):
             option_mask = executing_option == option_idx
             termination_bonus = self.termination_bonus[option_idx]
-            termination_prob[option_mask] = termination_net(features[option_mask]).squeeze() - termination_bonus
-
-        should_raise = False
-        if (termination_prob < 0).any() or (termination_prob > 1).any():
-            print("Termination prob out of bounds")
-            should_raise = True
-
-        if torch.isnan(termination_prob).any():
-            should_raise = True
-
-        if should_raise:
-            message = "\n".join((
-                "Code state:\n",
-                "Executing option\n",
-                str(executing_option),
-                "Features",
-                str(features),
-                "Termination bonus",
-                str(self.termination_bonus),
-                "Termination prob",
-                str(termination_prob),
-            ))
-            raise ValueError(message)
+            term_prob = termination_net(features[option_mask]).squeeze()
+            termination_prob[option_mask] = torch.relu(term_prob - termination_bonus)
 
         option_termination = torch.distributions.Bernoulli(termination_prob).sample()
         return option_termination.cpu().numpy().astype(dtype=bool), termination_prob
