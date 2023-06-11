@@ -80,8 +80,28 @@ class Termination(policies.BaseModel):
             option_mask = executing_option == option_idx
             termination_bonus = self.termination_bonus[option_idx]
             termination_prob[option_mask] = termination_net(features[option_mask]).squeeze() - termination_bonus
-            termination_prob[option_mask] = torch.clamp(termination_prob[option_mask], 0., 1.)
-        assert not torch.isnan(termination_prob).any()
+
+        should_raise = False
+        if (termination_prob < 0).any() or (termination_prob > 1).any():
+            print("Termination prob out of bounds")
+            should_raise = True
+
+        if torch.isnan(termination_prob).any():
+            should_raise = True
+
+        if should_raise:
+            message = "\n".join((
+                "Code state:\n",
+                "Executing option\n",
+                str(executing_option),
+                "Features",
+                str(features),
+                "Termination bonus",
+                str(self.termination_bonus),
+                "Termination prob",
+                str(termination_prob),
+            ))
+            raise ValueError(message)
 
         option_termination = torch.distributions.Bernoulli(termination_prob).sample()
         return option_termination.cpu().numpy().astype(dtype=bool), termination_prob

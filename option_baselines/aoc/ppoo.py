@@ -359,6 +359,13 @@ class PPOO(OnPolicyAlgorithm):
                         raise ValueError("grad_mean is nan")
 
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                if torch.isnan(grad_norm):
+                    # Figure out which parameter is nan
+                    for k, v in self.policy.named_parameters():
+                        if v.grad is None:
+                            continue
+                        if torch.isnan(v.grad.norm()):
+                            raise ValueError(f"NaN detected in gradient of {k}")
                 assert not list(self.policy.parameters(recurse=False)), "Found parameters not in any child module"
 
                 self.policy.optimizer.step()
