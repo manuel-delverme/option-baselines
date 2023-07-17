@@ -1,4 +1,4 @@
-from typing import List, Tuple, Type, Dict, Any
+from typing import List, Tuple, Type, Dict, Any, Optional
 from option_baselines.common.torch_layers import FakeOptimizer
 
 import gym
@@ -38,12 +38,15 @@ class Termination(policies.BaseModel):
             features_extractor_class: Type[CombinedExtractor],
             optimizer_class: Type[torch.optim.Optimizer],
             optimizer_kwargs: Dict[str, Any],
-            features_extractor_kwargs: dict,
+            features_extractor_kwargs: Optional[dict],
             num_options: int,
             lr_schedule: Schedule,
             activation_fn: Type[nn.Module] = nn.ReLU,
             normalize_images: bool = True,
     ):
+        if features_extractor_kwargs is None:
+            features_extractor_kwargs = {}
+
         features_extractor = features_extractor_class(
             observation_space,
             **features_extractor_kwargs)

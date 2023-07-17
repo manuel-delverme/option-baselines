@@ -2,6 +2,7 @@ import collections
 from typing import Any, Dict, Optional, Type, Union, Tuple, List, Mapping
 
 import gym
+import gymnasium
 import numpy as np
 import torch
 from stable_baselines3.common.callbacks import BaseCallback
@@ -9,7 +10,7 @@ from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv
 from stable_baselines3.common import utils as sb3_utils
-from stable_baselines3.common.vec_env import VecEnv
+from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv
 from torch.nn import functional as F
 
 import option_baselines.aoc
@@ -90,8 +91,35 @@ class PPOO(OnPolicyAlgorithm):
                 gym.spaces.Discrete,
                 gym.spaces.MultiDiscrete,
                 gym.spaces.MultiBinary,
+                gymnasium.spaces.Box,
+                gymnasium.spaces.Discrete,
+                gymnasium.spaces.MultiDiscrete,
+                gymnasium.spaces.MultiBinary,
             ),
         )
+
+        # def env_walk(env):
+        #     path = set()
+
+        #     while True:
+        #         path.add(env.__class__)
+        #         if hasattr(env, 'envs'):
+        #             env = env.envs[0]
+        #         elif hasattr(env, 'env'):
+        #             env = env.env
+        #         else:
+        #             return path
+
+        # env_path = env_walk(env)
+        should_unwrap = isinstance(self.env, DummyVecEnv) and gym.vector.sync_vector_env.SyncVectorEnv == type(
+            env.unwrapped)
+        if should_unwrap:
+            env, = self.env.envs
+            self.env = env
+            self.observation_space = env.observation_space
+            self.action_space = env.action_space
+            self.n_envs = env.num_envs
+
         self.meta_policy_class = meta_policy
         self.termination_class: Type[option_baselines.aoc.policies.Termination] = termination_class
 
