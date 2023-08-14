@@ -183,6 +183,7 @@ class PPOO(OnPolicyAlgorithm):
             with torch.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = sb3_utils.obs_as_tensor(self._last_obs, self.device)
+                # TODO: figure out why observation mission has an extra axis?!?!
                 actions, values, log_probs, options, meta_values, option_log_probs, termination_probs = self.policy(
                     obs_tensor, dones)
             actions = actions.cpu().numpy()
