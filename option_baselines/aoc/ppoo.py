@@ -546,6 +546,12 @@ class OptionNet(torch.nn.Module):
         self.meta_policy = meta_policy
         self.terminations = termination
 
+        # TODO: this is a hack because the evaluate_policy is hardcoded and not flexible,
+        # eval_executing_option_history cuts through several abstractions in a very bug prone way
+        # Lives in OptionNet, is filled by an unrelated callback of evaluate_policy, it's consumed by a metric report
+        # to be sent to the library manager. This is a mess.
+        self.eval_executing_option_history = []
+
         self.sub_modules = [*self.policies, self.meta_policy, self.terminations]
         self.optimizer = OptimizerGroup([sm.optimizer for sm in self.sub_modules])
 
@@ -687,7 +693,7 @@ class OptionNet(torch.nn.Module):
             else:
                 option_observation = observation[option_mask]
 
-            act, val, log_prob = option_net(option_observation)
+            act, val, log_prob = option_net(option_observation, deterministic=deterministic)
             actions[option_mask] = act
 
         # Convert to numpy
