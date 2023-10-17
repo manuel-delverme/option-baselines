@@ -10,6 +10,8 @@ from stable_baselines3.common import callbacks
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
 
+from common import evaluation
+
 
 class OptionRollout(callbacks.EvalCallback):
     def __init__(
@@ -41,11 +43,11 @@ class OptionRollout(callbacks.EvalCallback):
             return True
         if (self.num_timesteps - self.last_log) <= self.eval_freq:
             return True
-        if self.model.policy.meta_policy.initialization.available_options < 2:
+        if len(self.model.policy.available_options) < 2:
             return True
         self.last_log = self.num_timesteps
 
-        stable_baselines3.common.evaluation.evaluate_policy(
+        evaluation.evaluate_policy(
             self.model,
             self.eval_env,
             n_eval_episodes=self.n_eval_episodes,
