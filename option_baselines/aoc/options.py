@@ -1,5 +1,6 @@
 import collections
 import copy
+import hashlib
 import sys
 from typing import List, Tuple, Type, Dict, Any, Optional
 from typing import Union, Mapping
@@ -26,6 +27,14 @@ from torch.nn import functional as F
 from aoc.specs import OptionExecutionState
 from option_baselines.common import buffers
 from option_baselines.common import constants
+
+
+def make_option_hash(modules: List[nn.Module]):
+    sha = hashlib.sha256()
+    for p in modules:
+        sha.update(str(p.parameters()).encode())
+    parameter_hash = int(sha.hexdigest(), 16)
+    return f"{parameter_hash:x}"[:8]
 
 
 def setup_hrl(option_policy_class, meta_policy_class, initiation_class, termination_class,
@@ -61,7 +70,11 @@ class MetaAC(policies.MultiInputActorCriticPolicy):
 
 
 class SimpleAC(policies.MultiInputActorCriticPolicy):
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.option_hash = make_option_hash([self.action_net, self.features_extractor, self.mlp_extractor])
+        # TODO: this is not stable because these parameters are going to be trained and will change but we need an uid
+        # does not have to be a hash, just a unique identifier
 
 
 class Termination(policies.BaseModel):
