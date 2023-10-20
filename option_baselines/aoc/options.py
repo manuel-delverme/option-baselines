@@ -32,7 +32,7 @@ from option_baselines.common import constants
 def make_option_hash(modules: List[nn.Module]):
     sha = hashlib.sha256()
     for p in modules:
-        sha.update(str(p.parameters()).encode())
+        sha.update(str(sum(pi.sum() for pi in p.parameters())).encode())
     parameter_hash = int(sha.hexdigest(), 16)
     return f"{parameter_hash:x}"[:8]
 
