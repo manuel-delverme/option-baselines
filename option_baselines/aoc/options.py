@@ -314,7 +314,6 @@ class PPOOC(OnPolicyAlgorithm):
                 retr = self.policy(obs_tensor, self._last_rollout_states, dones)
                 state, actions, values, log_probs, meta_values, option_log_probs, termination_probs = retr
                 if actions.max().item() >= self.action_space.n:
-                    retr = self.policy(obs_tensor, state, dones)
                     raise ValueError("Actions not in action space")
 
             actions = actions.cpu().numpy()
@@ -431,9 +430,9 @@ class PPOOC(OnPolicyAlgorithm):
 
                 observations = rollout_data.observations
 
-                (meta_values, meta_log_prob, meta_entropy), (
-                    action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(observations, states,
-                                                                                             actions)
+                (meta_values, meta_log_prob, meta_entropy
+                 ), (action_values, action_log_prob, entropy,) = self.policy.evaluate_actions(
+                    observations, states, actions)
 
                 _, termination_probs = self.policy.terminations(observations, previous_options)
                 action_values, meta_values = action_values.flatten(), meta_values.flatten()
@@ -793,10 +792,6 @@ class HierarchicalPolicy(ActorCriticPolicy):
         assert isinstance(observation, dict), f"Expected dict, got {type(observation)}"
         assert isinstance(state, OptionExecutionState), f"Expected OptionExecutionState, got {type(state)}"
 
-        # executing_option: torch.Tensor = state.executing_option
-        # valid_opt = list(range(self.num_options)) + [constants.NO_OPTIONS, ]
-        # executing_opts = set(executing_option.unique().tolist())
-        # assert executing_opts.issubset(valid_opt), f"Executing option {executing_opts} is not valid."
         option_terminates, termination_probs = self.terminations(observation, state.executing_option)
 
         requires_new_option = torch.logical_or(option_terminates, first_transition)
