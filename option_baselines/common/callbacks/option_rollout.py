@@ -5,12 +5,11 @@ from typing import Optional, Union
 
 import gym
 import numpy as np
-import stable_baselines3.common.evaluation
 from stable_baselines3.common import callbacks
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
 
-from common import evaluation
+from option_baselines.common import evaluation
 
 
 class OptionRollout(callbacks.EvalCallback):

@@ -1,9 +1,6 @@
 import os
 from typing import List, Optional, Tuple, Union
 
-import os
-from typing import List, Optional, Tuple, Union
-
 import gym
 import numpy as np
 from stable_baselines3.common import base_class
@@ -11,7 +8,7 @@ from stable_baselines3.common.callbacks import EvalCallback, EventCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 from stable_baselines3.common.vec_env import sync_envs_normalization
 
-from aoc.specs import OptionExecutionState
+from option_baselines.aoc.specs import OptionExecutionState
 
 
 def every_step_callback_evaluate_policy(

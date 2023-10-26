@@ -3,14 +3,14 @@ from typing import Tuple
 import torch
 from torch import nn
 
-from common.torch_layers import FakeOptimizer
+from option_baselines.common import torch_layers
 
 
 class HardcodedTermination(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.forced_prob = kwargs.pop("forced_prob")
-        self.optimizer = FakeOptimizer()
+        self.optimizer = torch_layers.FakeOptimizer()
 
     def forward(self, observation: torch.Tensor, executing_option) -> Tuple[torch.Tensor, ...]:
         termination_prob = torch.full(executing_option.shape, self.forced_prob)

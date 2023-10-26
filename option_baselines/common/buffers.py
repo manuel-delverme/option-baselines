@@ -1,13 +1,11 @@
 import dataclasses
-from typing import Dict, Optional, Generator, List
+from typing import Dict, Optional, Generator
 
 import numpy as np
 import torch
 from stable_baselines3.common import buffers
 from stable_baselines3.common import type_aliases
 from stable_baselines3.common.vec_env import VecNormalize
-
-from aoc.specs import OptionExecutionState
 
 
 @dataclasses.dataclass

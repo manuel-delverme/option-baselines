@@ -24,7 +24,7 @@ from stable_baselines3.common.vec_env import VecEnv
 from torch import nn
 from torch.nn import functional as F
 
-from aoc.specs import OptionExecutionState
+from option_baselines.aoc.specs import OptionExecutionState
 from option_baselines.common import buffers
 from option_baselines.common import constants
 
