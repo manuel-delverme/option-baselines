@@ -303,8 +303,6 @@ class PPOOC(OnPolicyAlgorithm):
         callback.on_rollout_start()
 
         dones = self._last_episode_starts
-        is_available, _ = self.policy.initialization.forward_offpolicy(self._last_obs)
-
         while n_steps < n_rollout_steps:
             with torch.no_grad():
 
@@ -768,6 +766,7 @@ class HierarchicalPolicy(ActorCriticPolicy):
         meta_values = meta_values.squeeze(1)
 
         state, termination_probs = self.update_executing_option(observation, state, first_transition, meta_actions)
+        assert state.executing_option.max() < self.num_options, f"Executing option is out of bounds"
 
         termination_probs[first_transition] = 0.0  # The first option can not terminate before it starts
         actions, values, log_probs = (
@@ -794,7 +793,10 @@ class HierarchicalPolicy(ActorCriticPolicy):
 
         option_terminates, termination_probs = self.terminations(observation, state.executing_option)
 
-        requires_new_option = torch.logical_or(option_terminates, first_transition)
+        requires_new_option = torch.logical_or(
+            torch.logical_or(option_terminates, first_transition),
+            torch.eq(state.executing_option, constants.NO_OPTIONS),
+        )
         state.executing_option[requires_new_option] = meta_actions[requires_new_option]
         return state, termination_probs
 
