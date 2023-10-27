@@ -527,32 +527,29 @@ class PPOOC(OnPolicyAlgorithm):
 
         self._n_updates += 1
 
-        self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
-        self.logger.record("train/value_loss", np.mean(action_value_losses))
-        self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
-        self.logger.record("train/clip_fraction", np.mean(clip_fractions))
-
-        # self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("entropy/entropy_coeff", self._ent_coef, self.num_timesteps)
-        self.logger.record("entropy/option", -entropies.mean().item())
-        self.logger.record("entropy/meta", -meta_entropies.mean().item())
-
-        self.logger.record("train/grad_norm", grad_norm)
-        for k, v in grad_means.items():
-            self.logger.record("grad_mean/" + k, v.item())
-
-        self.logger.record("train/policy_loss", policy_loss.item())
-        self.logger.record("train/value_loss", value_loss.item())
-        self.logger.record("train/advantages", advantages.mean().item())
-        self.logger.record("meta_train/policy_loss", meta_policy_loss.item())
-        self.logger.record("meta_train/value_loss", meta_value_loss.item())
-        self.logger.record("meta_train/advantages", meta_advantages.mean().item())
-
+        metrics = {
+            "train/policy_gradient_loss": np.mean(pg_losses),
+            "train/action_value_loss": np.mean(action_value_losses),
+            "train/approx_kl": np.mean(approx_kl_divs),
+            "train/clip_fraction": np.mean(clip_fractions),
+            "entropy/entropy_coeff": self._ent_coef,
+            "entropy/option": -entropies.mean().item(),
+            "entropy/meta": -meta_entropies.mean().item(),
+            "train/grad_norm": grad_norm,
+            "train/policy_loss": policy_loss.item(),
+            "train/value_loss": value_loss.item(),
+            "train/advantages": advantages.mean().item(),
+            "meta_train/policy_loss": meta_policy_loss.item(),
+            "meta_train/value_loss": meta_value_loss.item(),
+            "meta_train/advantages": meta_advantages.mean().item(),
+            **{"grad_mean/" + k: v.item() for k, v in grad_means.items()},
+        }
         if hasattr(self.policy, "log_std"):
-            self.logger.record("train/std", torch.exp(self.policy.log_std).mean().item())
+            metrics["train/std"] = torch.exp(self.policy.log_std).mean().item()
+        self.logger.log(metrics, commit=False)
 
     def loss_fn(self, locals_, globals_) -> torch.Tensor:
-        loss = 0
+        loss = torch.tensor(0, dtype=torch.float32)
         loss += locals_["policy_loss"]
         loss += locals_["meta_policy_loss"]
         loss += self.vf_coef * locals_["value_loss"]
@@ -568,12 +565,14 @@ class PPOOC(OnPolicyAlgorithm):
         meta_advantages = locals_["meta_advantages"]
         termination_probs = locals_["termination_probs"]
 
-        margin_loss = ((
-                               meta_advantages.detach() + self.switching_margin) * termination_probs).mean()  # TODO: the margin should be scaled by the return
+        # TODO: the margin should be scaled by the return
+        margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()
         termination_loss = termination_probs.mean()
-        self.logger.record("train/margin_loss", margin_loss.item())
-        self.logger.record("train/termination_loss", termination_loss.item())
-        self.logger.record("train/termination_mean", termination_probs.mean().item())
+        self.logger.log({
+            "train/margin_loss": margin_loss.item(),
+            "train/termination_loss": termination_loss.item(),
+            "train/termination_mean": termination_probs.mean().item(),
+        })
 
         loss = termination_loss * self.term_coef + margin_loss
         return loss
@@ -589,6 +588,8 @@ class KLTermination(Termination):
         super().__init__(*args, **kwargs)
 
     def termination_loss(self, locals_, globals_):
+        termination_metrics = {}
+
         loss = super().termination_loss(locals_, globals_)
         termination_probs = locals_["termination_probs"]
         first_option = locals_["previous_options"] == constants.NO_OPTIONS
@@ -601,22 +602,22 @@ class KLTermination(Termination):
             if option_idx == constants.NO_OPTIONS:
                 continue
             termination_prob = termination_probs[executing_option == option_idx].mean().item()
-            self.logger.record(f"termination/prob_{option_idx}", termination_prob)
+            termination_metrics[f"termination/prob_{option_idx}"] = termination_prob
 
         if self.termination_kl_weight == 0. or not mask.any():
             termination_kl_loss = torch.tensor(0.)
         else:
-            self.logger.record("termination/probs", termination_probs[mask].mean())
+            termination_metrics["termination/probs"] = termination_probs[mask].mean().item()
 
             termination_kl_loss = self.kl_dist(self.target_termination_prob, termination_probs[mask])
 
             # Extreme termination with hard-coded value since the KL divergence is infinite and the gradient is NaN
             termination_kl_loss[torch.isinf(termination_kl_loss)] = 0.
-
             termination_kl_loss = termination_kl_loss.mean()
 
-            self.logger.record("termination/kl", termination_kl_loss.item())
+            termination_metrics["termination/kl"] = termination_kl_loss.item()
 
+        self.logger.log(termination_metrics, commit=False)
         return loss + termination_kl_loss * self.termination_kl_weight
 
     def kl_dist(self, p, q):

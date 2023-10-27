@@ -103,7 +103,7 @@ class EvalMetricsCallback(EventCallback):
         executed_options = np.concatenate(self.executed_options)
         self.executed_options.clear()
         option_frequencies, _ = np.histogram(executed_options, bins=list(self.model.available_options), density=True)
-        self.logger.log({"rollout/option_frequencies": option_frequencies}, step=self.num_timesteps, commit=False)
+        self.logger.log({"rollout/option_frequencies": option_frequencies}, commit=False)
 
 
 class OptionEvalCallback(EvalCallback):
@@ -160,19 +160,19 @@ class OptionEvalCallback(EvalCallback):
             print(
                 f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
             print(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
-        # Add to current Logger
-        self.logger.record("eval/mean_reward", float(mean_reward))
-        self.logger.record("eval/mean_ep_length", mean_ep_length)
+
+        option_eval_metrics = {
+            "eval/mean_reward": float(mean_reward),
+            "eval/mean_ep_length": float(mean_ep_length)
+        }
 
         if len(self._is_success_buffer) > 0:
             success_rate = np.mean(self._is_success_buffer)
             if self.verbose > 0:
                 print(f"Success rate: {100 * success_rate:.2f}%")
-            self.logger.record("eval/success_rate", success_rate)
+            option_eval_metrics["eval/success_rate"] = float(success_rate)
 
-        # Dump log so the evaluation results are printed with the correct timestep
-        self.logger.record("time/total_timesteps", self.num_timesteps, exclude="tensorboard")
-        self.logger.dump(self.num_timesteps)
+        option_eval_metrics["time/total_timesteps"] = self.num_timesteps
 
         if mean_reward > self.best_mean_reward:
             if self.verbose > 0:
@@ -187,6 +187,8 @@ class OptionEvalCallback(EvalCallback):
         # Trigger callback after every evaluation, if needed
         if self.callback is not None:
             continue_training = continue_training and self._on_event()
+
+        self.logger.log(option_eval_metrics, commit=False)
         return continue_training
 
 # def count_options(model: PPOOC, executed_options):
