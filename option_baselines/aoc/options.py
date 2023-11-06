@@ -1,7 +1,10 @@
 import collections
 import copy
-import hashlib
+import logging
+import os
 import sys
+import time
+import uuid
 from typing import List, Tuple, Type, Dict, Any, Optional
 from typing import Union, Mapping
 
@@ -27,14 +30,6 @@ from torch.nn import functional as F
 from option_baselines.aoc.specs import OptionExecutionState
 from option_baselines.common import buffers
 from option_baselines.common import constants
-
-
-def make_option_hash(modules: List[nn.Module]):
-    sha = hashlib.sha256()
-    for p in modules:
-        sha.update(str(sum(pi.sum() for pi in p.parameters())).encode())
-    parameter_hash = int(sha.hexdigest(), 16)
-    return f"{parameter_hash:x}"[:8]
 
 
 def setup_hrl(option_policy_class, meta_policy_class, initiation_class, termination_class,
@@ -72,9 +67,12 @@ class MetaAC(policies.MultiInputActorCriticPolicy):
 class SimpleAC(policies.MultiInputActorCriticPolicy):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.option_hash = make_option_hash([self.action_net, self.features_extractor, self.mlp_extractor])
-        # TODO: this is not stable because these parameters are going to be trained and will change but we need an uid
-        # does not have to be a hash, just a unique identifier
+        random = os.urandom(16)
+        curr_time = time.time()
+        current_time = bytes(curr_time.hex(), encoding="utf-8")
+        bytes_seq = random + current_time
+        self.option_hash = uuid.UUID(bytes=bytes_seq[:16], version=4).hex[:8]
+        logging.info(f">>>>>>> Option hash: current_time: {curr_time}: {current_time}, random: {random} => {self.option_hash}")
 
 
 class Termination(policies.BaseModel):
