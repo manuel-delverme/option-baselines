@@ -72,7 +72,8 @@ class SimpleAC(policies.MultiInputActorCriticPolicy):
         current_time = bytes(curr_time.hex(), encoding="utf-8")
         bytes_seq = random + current_time
         self.option_hash = uuid.UUID(bytes=bytes_seq[:16], version=4).hex[:8]
-        logging.info(f">>>>>>> Option hash: current_time: {curr_time}: {current_time}, random: {random} => {self.option_hash}")
+        curr_time_iso = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(curr_time))
+        logging.info(f">>>>>>> Option hash: current_time: {curr_time_iso}: {current_time}, random: {random} => {self.option_hash}")
 
 
 class Termination(policies.BaseModel):

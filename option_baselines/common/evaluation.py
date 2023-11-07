@@ -103,7 +103,7 @@ class EvalMetricsCallback(EventCallback):
         executed_options = np.concatenate(self.executed_options)
         self.executed_options.clear()
         option_frequencies, _ = np.histogram(executed_options, bins=list(self.model.available_options), density=True)
-        self.logger.log({"option_stats/frequencies": option_frequencies}, commit=False)
+        self.logger.log({"eval/frequencies": option_frequencies}, commit=False)
 
 
 class OptionEvalCallback(EvalCallback):
