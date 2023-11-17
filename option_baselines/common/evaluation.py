@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import List, Optional, Tuple, Union
 
@@ -111,7 +112,7 @@ class OptionEvalCallback(EvalCallback):
         self.callback_eval_metrics: EventCallback = kwargs.pop("metrics_callback")
 
         super(OptionEvalCallback, self).__init__(*args, **kwargs)
-        # self._is_success_buffer = []
+        assert self.deterministic is None, "We are going to use both deterministic and non-deterministic evaluation"
 
     def _on_training_start(self) -> None:
         self.callback_eval_metrics.init_callback(self.model)
@@ -136,12 +137,23 @@ class OptionEvalCallback(EvalCallback):
         self._is_success_buffer = []
 
         # This is _the_one_change_ from the original function, sadly it's hardcoded in the original
-        episode_rewards, episode_lengths = every_step_callback_evaluate_policy(
+        deterministic_episode_rewards, deterministic_episode_lengths = every_step_callback_evaluate_policy(
             self.model,
             self.eval_env,
             n_eval_episodes=self.n_eval_episodes,
             render=self.render,
-            deterministic=self.deterministic,
+            deterministic=True,
+            return_episode_rewards=True,
+            warn=self.warn,
+            callback=self.callback_eval_metrics,
+        )
+
+        stochstic_episode_rewards, stochastic_episode_lengths = every_step_callback_evaluate_policy(
+            self.model,
+            self.eval_env,
+            n_eval_episodes=self.n_eval_episodes,
+            render=self.render,
+            deterministic=True,
             return_episode_rewards=True,
             warn=self.warn,
             callback=self.callback_eval_metrics,
@@ -149,21 +161,22 @@ class OptionEvalCallback(EvalCallback):
 
         if self.log_path is not None:
             self.evaluations_timesteps.append(self.num_timesteps)
-            self.evaluations_results.append(episode_rewards)
-            self.evaluations_length.append(episode_lengths)
+            self.evaluations_results.append(deterministic_episode_rewards)
+            self.evaluations_length.append(deterministic_episode_lengths)
 
-        mean_reward, std_reward = np.mean(episode_rewards), np.std(episode_rewards)
-        mean_ep_length, std_ep_length = np.mean(episode_lengths), np.std(episode_lengths)
+        mean_reward, std_reward = np.mean(deterministic_episode_rewards), np.std(deterministic_episode_rewards)
+        mean_ep_length, std_ep_length = np.mean(deterministic_episode_lengths), np.std(deterministic_episode_lengths)
         self.last_mean_reward = mean_reward
 
         if self.verbose > 0:
-            print(
-                f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
-            print(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
+            logging.info(f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
+            logging.info(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
 
         option_eval_metrics = {
-            "eval/mean_reward": float(mean_reward),
-            "eval/mean_ep_length": float(mean_ep_length)
+            "deterministic_eval/mean_reward": float(mean_reward),
+            "deterministic_eval/mean_ep_length": float(mean_ep_length),
+            "stochastic_eval/mean_reward": float(np.mean(stochstic_episode_rewards)),
+            "stochastic_eval/mean_ep_length": float(np.mean(stochastic_episode_lengths)),
         }
 
         if len(self._is_success_buffer) > 0:
