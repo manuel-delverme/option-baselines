@@ -153,7 +153,7 @@ class OptionEvalCallback(EvalCallback):
             self.eval_env,
             n_eval_episodes=self.n_eval_episodes,
             render=self.render,
-            deterministic=True,
+            deterministic=False,
             return_episode_rewards=True,
             warn=self.warn,
             callback=self.callback_eval_metrics,

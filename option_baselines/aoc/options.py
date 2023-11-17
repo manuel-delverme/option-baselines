@@ -858,7 +858,6 @@ class HierarchicalPolicy(ActorCriticPolicy):
             (used in recurrent policies)
         """
         if state is None:
-            assert deterministic
             bs = len(episode_start)
 
             is_available = torch.zeros((bs, self.num_options), dtype=torch.bool)
@@ -1040,8 +1039,7 @@ class StatefulMetaActorCriticPolicy(MetaAC):
         observation, vectorized_env = self.obs_to_tensor(observation)
 
         with torch.no_grad():
-            option_distribution = self.get_distribution(
-                observation, option_is_available)  # <- CHANGE: we pass the state
+            option_distribution = self.get_distribution(observation, option_is_available)  # <- CHANGE: we pass the state
             options = option_distribution.get_actions(deterministic=deterministic)
 
         # Convert to numpy
