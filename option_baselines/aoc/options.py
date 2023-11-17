@@ -1054,8 +1054,7 @@ class StatefulMetaActorCriticPolicy(MetaAC):
 
         return options
 
-    def _get_action_dist_from_latent(self, latent_pi: torch.Tensor,
-                                     option_is_available: torch.Tensor) -> distributions.Distribution:
+    def _get_action_dist_from_latent(self, latent_pi: torch.Tensor, option_is_available: torch.Tensor) -> distributions.Distribution:
         option_logits = self.action_net(latent_pi)
 
         unavail_val = torch.tensor(float("-inf"), device=option_logits.device, dtype=option_logits.dtype)
