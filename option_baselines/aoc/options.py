@@ -37,17 +37,11 @@ def setup_hrl(option_policy_class, meta_policy_class, initiation_class, terminat
               action_space, device, num_options, observation_space):
     option_policies = torch.nn.ModuleList()  # Policy is a keyword for stable-baselines.
     for _ in range(num_options):
-        option_policies.append(
-            option_policy_class(observation_space, action_space, **option_policy_kwargs).to(device))
+        option_policies.append(option_policy_class(observation_space, action_space, **option_policy_kwargs).to(device))
     option_space = gym.spaces.Discrete(len(option_policies))
-    meta_policy = meta_policy_class(
-        observation_space, option_space, **meta_policy_kwargs).to(device)
+    meta_policy = meta_policy_class(observation_space, option_space, **meta_policy_kwargs).to(device)
     initialization = initiation_class(observation_space, **initiation_kwargs, ).to(device)
-    terminations = termination_class(
-        observation_space,
-        num_options=num_options,
-        **termination_kwargs
-    ).to(device)
+    terminations = termination_class(observation_space, num_options=num_options, **termination_kwargs).to(device)
     # Policy is a keyword for stable-baselines.
     # Does not really reflect the current hierarchical structure but it's hardcoded in the library
     # a better name would be self.parameters
@@ -93,9 +87,7 @@ class Termination(policies.BaseModel):
         if features_extractor_kwargs is None:
             features_extractor_kwargs = {}
 
-        features_extractor = features_extractor_class(
-            observation_space,
-            **features_extractor_kwargs)
+        features_extractor = features_extractor_class(observation_space, **features_extractor_kwargs)
         super().__init__(
             observation_space,
             action_space=None,
@@ -526,22 +518,26 @@ class PPOOC(OnPolicyAlgorithm):
 
         self._n_updates += 1
 
+        meta_entropy = meta_entropy.mean().item()
+        option_entropy = entropy.mean().item()
+        grad_means = {k: v.item() for k, v in grad_means.items()}
+
         metrics = {
             "train/policy_gradient_loss": np.mean(pg_losses),
             "train/action_value_loss": np.mean(action_value_losses),
             "train/approx_kl": np.mean(approx_kl_divs),
             "train/clip_fraction": np.mean(clip_fractions),
             "option/entropy_coeff": self._ent_coef,
-            "option/entropy": -entropies.mean().item(),
+            "option/entropy": option_entropy,
             "train/grad_norm": grad_norm,
             "train/policy_loss": policy_loss.item(),
             "train/value_loss": value_loss.item(),
             "train/advantages": advantages.mean().item(),
-            "meta_train/entropy": -meta_entropies.mean().item(),
+            "meta_train/entropy": meta_entropy,
             "meta_train/policy_loss": meta_policy_loss.item(),
             "meta_train/value_loss": meta_value_loss.item(),
             "meta_train/advantages": meta_advantages.mean().item(),
-            **{"grad_mean/" + k: v.item() for k, v in grad_means.items()},
+            **{"grad_mean/" + k: v for k, v in grad_means.items()},
         }
         if hasattr(self.policy, "log_std"):
             metrics["train/std"] = torch.exp(self.policy.log_std).mean().item()
@@ -567,10 +563,12 @@ class PPOOC(OnPolicyAlgorithm):
         # TODO: the margin should be scaled by the return
         margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()
         termination_loss = termination_probs.mean()
+        termination_mean = termination_probs.mean().item()
+
         self.logger.log({
             "train/margin_loss": margin_loss.item(),
             "train/termination_loss": termination_loss.item(),
-            "train/termination_mean": termination_probs.mean().item(),
+            "train/termination_mean": termination_mean,
         })
 
         loss = termination_loss * self.term_coef + margin_loss
