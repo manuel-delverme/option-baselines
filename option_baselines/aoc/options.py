@@ -113,7 +113,7 @@ class Termination(policies.BaseModel):
         for option_idx, termination_net in enumerate(self.option_terminations):
             option_mask = executing_option == option_idx
             termination_prob[option_mask] = termination_net(features[option_mask]).squeeze()
-            termination_prob[option_mask] = torch.clamp(termination_prob[option_mask], 0., 1.)
+            # termination_prob[option_mask] = torch.clamp(termination_prob[option_mask], 0., 1.)
         assert not torch.isnan(termination_prob).any()
 
         option_termination = torch.distributions.Bernoulli(termination_prob).sample()
@@ -559,15 +559,20 @@ class PPOOC(OnPolicyAlgorithm):
     def termination_loss(self, locals_, _globals):
         meta_advantages = locals_["meta_advantages"]
         termination_probs = locals_["termination_probs"]
+        termination_logprob = torch.log(termination_probs)
 
-        # TODO: the margin should be scaled by the return
-        margin_loss = ((meta_advantages.detach() + self.switching_margin) * termination_probs).mean()
+        value_to_continue = meta_advantages.detach() + self.switching_margin
+        margin_loss = (value_to_continue * termination_logprob).mean()
         termination_loss = termination_probs.mean()
         termination_mean = termination_probs.mean().item()
+
+        # There is no way to fix it, reintroduce KL regularization to some baseline temporal extension
 
         self.logger.log({
             "train/margin_loss": margin_loss.item(),
             "train/termination_loss": termination_loss.item(),
+            "train/termination_logprob": termination_logprob.mean().item(),
+            "train/value_to_continue": value_to_continue.mean().item(),
             "train/termination_mean": termination_mean,
         })
 
