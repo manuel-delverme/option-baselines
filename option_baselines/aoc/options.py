@@ -396,7 +396,7 @@ class PPOOC(OnPolicyAlgorithm):
         clip_fractions = []
         continue_training = True
 
-        self.n_batches = (self.n_epochs * self.rollout_buffer.actions.size) // self.batch_size
+        self.n_batches = max((self.n_epochs * self.rollout_buffer.actions.size) // self.batch_size, 1)
 
         assert self.n_epochs > 0, "Not enough data to train on"
         # train for n_epochs epochs
