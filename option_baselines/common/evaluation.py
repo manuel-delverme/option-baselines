@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple, Union
 import gym
 import numpy as np
 from stable_baselines3.common import base_class
-from stable_baselines3.common.callbacks import EvalCallback, EventCallback
+from stable_baselines3.common.callbacks import EvalCallback, EventCallback, BaseCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 from stable_baselines3.common.vec_env import sync_envs_normalization
 
@@ -15,7 +15,7 @@ from option_baselines.aoc.specs import OptionExecutionState
 def every_step_callback_evaluate_policy(
         model: "base_class.BaseAlgorithm",
         env: Union[gym.Env, VecEnv],
-        callback: EventCallback,
+        callback: Optional[EventCallback],
         n_eval_episodes: int,
         deterministic: bool,
         render: bool = False,
@@ -48,7 +48,8 @@ def every_step_callback_evaluate_policy(
     states = None
     episode_starts = np.ones((env.num_envs,), dtype=bool)
 
-    callback.on_rollout_start()
+    if callback:
+        callback.on_rollout_start()
 
     while (episode_counts < episode_count_targets).any():
         actions, states = model.predict(
@@ -57,8 +58,9 @@ def every_step_callback_evaluate_policy(
         current_rewards += rewards
         current_lengths += 1
 
-        callback.update_locals(locals())
-        callback.on_step()
+        if callback:
+            callback.update_locals(locals())
+            callback.on_step()
 
         for i in range(num_envs):
             if episode_counts[i] < episode_count_targets[i]:
@@ -81,8 +83,9 @@ def every_step_callback_evaluate_policy(
     mean_reward = np.mean(episode_rewards)
     std_reward = np.std(episode_rewards)
 
-    callback.update_locals(locals())
-    callback.on_rollout_end()
+    if callback:
+        callback.update_locals(locals())
+        callback.on_rollout_end()
 
     if reward_threshold is not None:
         assert mean_reward > reward_threshold, "Mean reward below threshold: " f"{mean_reward:.2f} < {reward_threshold:.2f}"
@@ -104,7 +107,8 @@ class EvalMetricsCallback(EventCallback):
         executed_options = np.concatenate(self.executed_options)
         self.executed_options.clear()
         option_frequencies, _ = np.histogram(executed_options, bins=list(self.model.available_options), density=True)
-        self.logger.log({"eval/frequencies": option_frequencies}, commit=False)
+        prefix = "deterministic_eval" if self.locals["deterministic"] else "stochastic_eval"
+        self.logger.log({f"{prefix}/frequencies": option_frequencies}, commit=False)
 
 
 class OptionEvalCallback(EvalCallback):
@@ -136,7 +140,6 @@ class OptionEvalCallback(EvalCallback):
         # Reset success rate buffer
         self._is_success_buffer = []
 
-        # This is _the_one_change_ from the original function, sadly it's hardcoded in the original
         deterministic_episode_rewards, deterministic_episode_lengths = every_step_callback_evaluate_policy(
             self.model,
             self.eval_env,
@@ -145,10 +148,11 @@ class OptionEvalCallback(EvalCallback):
             deterministic=True,
             return_episode_rewards=True,
             warn=self.warn,
-            callback=self.callback_eval_metrics,
+            # The callback reports to the library as a side effect, we want to report stochastic metrics because they are closer to training settings
+            callback=None,  # self.callback_eval_metrics,
         )
 
-        stochstic_episode_rewards, stochastic_episode_lengths = every_step_callback_evaluate_policy(
+        stochastic_episode_rewards, stochastic_episode_lengths = every_step_callback_evaluate_policy(
             self.model,
             self.eval_env,
             n_eval_episodes=self.n_eval_episodes,
@@ -175,7 +179,7 @@ class OptionEvalCallback(EvalCallback):
         option_eval_metrics = {
             "deterministic_eval/mean_reward": float(mean_reward),
             "deterministic_eval/mean_ep_length": float(mean_ep_length),
-            "stochastic_eval/mean_reward": float(np.mean(stochstic_episode_rewards)),
+            "stochastic_eval/mean_reward": float(np.mean(stochastic_episode_rewards)),
             "stochastic_eval/mean_ep_length": float(np.mean(stochastic_episode_lengths)),
         }
 
