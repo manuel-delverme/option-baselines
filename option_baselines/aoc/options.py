@@ -156,6 +156,15 @@ class UnusedFeaturesExtractor(BaseFeaturesExtractor):
         raise NotImplementedError
 
 
+def kl_dist(p, q):
+    t1 = p * (p / q).log()
+    t2 = (1 - p) * ((1 - p) / (1 - q)).log()
+    t1[p == 0] = 0  # Avoid infinity / NaNs
+    t2[p == 1] = 0
+    termination_kl_loss = (t1 + t2)
+    return termination_kl_loss
+
+
 class PPOOC(OnPolicyAlgorithm):
     def __init__(
             self,
@@ -189,6 +198,9 @@ class PPOOC(OnPolicyAlgorithm):
             offpolicy_learning: bool = True,
             tensorboard_log: Optional[str] = None,
 
+            termination_kl_weight: Optional[float] = None,
+            target_termination_prob: float = -1,
+
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
@@ -204,6 +216,9 @@ class PPOOC(OnPolicyAlgorithm):
         self.normalize_advantage = normalize_advantage
         self.offpolicy_learning = offpolicy_learning
         self.num_options = num_options
+
+        self.termination_kl_weight = termination_kl_weight
+        self.target_termination_prob = target_termination_prob
 
         self.entropy_scheduler = sb3_utils.get_linear_fn(
             start=initial_ent_coef, end=initial_ent_coef / final_ent_coef, end_fraction=0.5)
@@ -556,6 +571,9 @@ class PPOOC(OnPolicyAlgorithm):
         # TODO: remove termination and auxiliary loss function
         return loss
 
+    def auxiliary_loss(self, locals_, globals_):
+        return 0.0
+
     def termination_loss(self, locals_, _globals):
         meta_advantages = locals_["meta_advantages"]
         termination_probs = locals_["termination_probs"]
@@ -566,69 +584,47 @@ class PPOOC(OnPolicyAlgorithm):
         termination_loss = termination_probs.mean()
         termination_mean = termination_probs.mean().item()
 
-        # There is no way to fix it, reintroduce KL regularization to some baseline temporal extension
+        loss = termination_loss * self.term_coef + margin_loss
 
-        self.logger.log({
+        termination_metrics = {
             "train/margin_loss": margin_loss.item(),
             "train/termination_loss": termination_loss.item(),
             "train/termination_logprob": termination_logprob.mean().item(),
             "train/value_to_continue": value_to_continue.mean().item(),
             "train/termination_mean": termination_mean,
-        })
+        }
 
-        loss = termination_loss * self.term_coef + margin_loss
-        return loss
+        if self.termination_kl_weight is not None:
+            # loss = super().termination_loss(locals_, globals_)
+            termination_probs = locals_["termination_probs"]
+            first_option = locals_["previous_options"] == constants.NO_OPTIONS
 
-    def auxiliary_loss(self, locals_, globals_):
-        return 0.0
+            mask = torch.logical_not(first_option)
 
+            executing_option = locals_["previous_options"]
 
-class KLTermination(Termination):
-    def __init__(self, *args, **kwargs):
-        self.target_termination_prob = kwargs.pop("target_termination_prob")
-        self.termination_kl_weight = kwargs.pop("termination_kl_weight")
-        super().__init__(*args, **kwargs)
+            for option_idx in executing_option.unique().tolist():
+                if option_idx == constants.NO_OPTIONS:
+                    continue
+                termination_prob = termination_probs[executing_option == option_idx].mean().item()
+                termination_metrics[f"termination/prob_{option_idx}"] = termination_prob
 
-    def termination_loss(self, locals_, globals_):
-        termination_metrics = {}
+            if self.termination_kl_weight == 0. or not mask.any():
+                termination_kl_loss = torch.tensor(0.)
+            else:
+                termination_metrics["termination/probs"] = termination_probs[mask].mean().item()
 
-        loss = super().termination_loss(locals_, globals_)
-        termination_probs = locals_["termination_probs"]
-        first_option = locals_["previous_options"] == constants.NO_OPTIONS
+                termination_kl_loss = kl_dist(self.target_termination_prob, termination_probs[mask])
 
-        mask = torch.logical_not(first_option)
-
-        executing_option = locals_["previous_options"]
-
-        for option_idx in executing_option.unique().tolist():
-            if option_idx == constants.NO_OPTIONS:
-                continue
-            termination_prob = termination_probs[executing_option == option_idx].mean().item()
-            termination_metrics[f"termination/prob_{option_idx}"] = termination_prob
-
-        if self.termination_kl_weight == 0. or not mask.any():
-            termination_kl_loss = torch.tensor(0.)
-        else:
-            termination_metrics["termination/probs"] = termination_probs[mask].mean().item()
-
-            termination_kl_loss = self.kl_dist(self.target_termination_prob, termination_probs[mask])
-
-            # Extreme termination with hard-coded value since the KL divergence is infinite and the gradient is NaN
-            termination_kl_loss[torch.isinf(termination_kl_loss)] = 0.
-            termination_kl_loss = termination_kl_loss.mean()
+                # Extreme termination with hard-coded value since the KL divergence is infinite and the gradient is NaN
+                termination_kl_loss[torch.isinf(termination_kl_loss)] = 0.
+                termination_kl_loss = termination_kl_loss.mean()
 
             termination_metrics["termination/kl"] = termination_kl_loss.item()
+            loss += termination_kl_loss * self.termination_kl_weight
 
         self.logger.log(termination_metrics, commit=False)
-        return loss + termination_kl_loss * self.termination_kl_weight
-
-    def kl_dist(self, p, q):
-        t1 = p * (p / q).log()
-        t2 = (1 - p) * ((1 - p) / (1 - q)).log()
-        t1[p == 0] = 0  # Avoid infinity / NaNs
-        t2[p == 1] = 0
-        termination_kl_loss = (t1 + t2)
-        return termination_kl_loss
+        return loss
 
 
 class OptimizerGroup:
