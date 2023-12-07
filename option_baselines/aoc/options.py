@@ -592,16 +592,13 @@ class PPOOC(OnPolicyAlgorithm):
         else:
             margin_loss = (value_to_continue * termination_probs).mean()
 
-        termination_loss = 0.
+        termination_loss = torch.tensor(0)
         if self.minimize_termination_prob:
             termination_loss = termination_probs.mean()
 
         termination_mean = termination_probs.mean().item()
 
         loss = termination_loss * self.term_coef + margin_loss
-
-        meta_advantages = locals_["meta_advantages"]
-        termination_probs = locals_["termination_probs"]
 
         termination_metrics = {
             "train/margin_loss": margin_loss.item(),
