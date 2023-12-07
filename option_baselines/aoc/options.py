@@ -201,6 +201,9 @@ class PPOOC(OnPolicyAlgorithm):
             termination_kl_weight: Optional[float] = None,
             target_termination_prob: float = -1,
 
+            margin_loss_log_prob: bool = True,
+            minimize_termination_prob: bool = False,
+
             verbose: int = 0,
             seed: Optional[int] = None,
             device: Union[torch.device, str] = "auto",
@@ -219,6 +222,9 @@ class PPOOC(OnPolicyAlgorithm):
 
         self.termination_kl_weight = termination_kl_weight
         self.target_termination_prob = target_termination_prob
+
+        self.margin_loss_log_prob = margin_loss_log_prob
+        self.minimize_termination_prob = minimize_termination_prob
 
         self.entropy_scheduler = sb3_utils.get_linear_fn(
             start=initial_ent_coef, end=initial_ent_coef / final_ent_coef, end_fraction=0.5)
@@ -580,11 +586,22 @@ class PPOOC(OnPolicyAlgorithm):
         termination_logprob = torch.log(termination_probs)
 
         value_to_continue = meta_advantages.detach() + self.switching_margin
-        margin_loss = (value_to_continue * termination_logprob).mean()
-        termination_loss = termination_probs.mean()
+
+        if self.margin_loss_log_prob:
+            margin_loss = (value_to_continue * termination_logprob).mean()
+        else:
+            margin_loss = (value_to_continue * termination_probs).mean()
+
+        termination_loss = 0.
+        if self.minimize_termination_prob:
+            termination_loss = termination_probs.mean()
+
         termination_mean = termination_probs.mean().item()
 
         loss = termination_loss * self.term_coef + margin_loss
+
+        meta_advantages = locals_["meta_advantages"]
+        termination_probs = locals_["termination_probs"]
 
         termination_metrics = {
             "train/margin_loss": margin_loss.item(),
