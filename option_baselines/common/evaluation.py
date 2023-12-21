@@ -1,11 +1,14 @@
+# import collections
 import logging
 import os
 from typing import List, Optional, Tuple, Union
 
 import gym
 import numpy as np
+# import torch
 from stable_baselines3.common import base_class
-from stable_baselines3.common.callbacks import EvalCallback, EventCallback, BaseCallback
+from stable_baselines3.common.callbacks import EvalCallback, EventCallback
+# from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 from stable_baselines3.common.vec_env import sync_envs_normalization
 
@@ -97,10 +100,27 @@ def every_step_callback_evaluate_policy(
 class EvalMetricsCallback(EventCallback):
     def _on_rollout_start(self):
         self.executed_options = []
+        # self.option_advantage_gap = collections.defaultdict(list)
+        # self.last_executing_options = None
 
     def _on_step(self) -> bool:
         state: OptionExecutionState = self.locals["states"]
+        # policy: ActorCriticPolicy = self.locals["model"].policy
         self.executed_options.append(state.executing_option)
+
+        # if self.last_executing_options is None:
+        #     self.last_executing_options = state.executing_option
+        #     obs = self.locals["observations"]
+        #     obs, _ = policy.obs_to_tensor(obs)
+        #     with torch.no_grad():
+        #         values, meta_values = policy.predict_values(obs, state.executing_option)
+        #     self.option_entry_value = meta_values
+
+        # has_changed_option = torch.not_equal(self.last_executing_options, state.executing_option)
+        # current_advantage = meta_values - self.option_entry_value
+        # for has_changed, option_idx, option_adv in zip(has_changed_option, self.last_executing_options, current_advantage):
+        #     if has_changed:
+        #         self.option_advantage_gap[option_idx].append(option_adv)
         return True
 
     def _on_rollout_end(self):
