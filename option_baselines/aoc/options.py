@@ -471,7 +471,9 @@ class PPOOC(OnPolicyAlgorithm):
                 clip_fractions.append(clip_fraction)
 
                 if self.offpolicy_learning:
-                    raise NotImplementedError
+                    controllable_meta_advantages = torch.einsum("b,b->b", termination_probs.detach(), meta_advantages)
+                    meta_entropy = torch.einsum("b,b->b", termination_probs.detach(), meta_entropy)
+                    meta_policy_loss = -(controllable_meta_advantages * meta_log_prob).mean()
                 else:
                     controllable_meta_advantages = torch.einsum("b,b->b", termination_probs.detach(), meta_advantages)
                     meta_entropy = torch.einsum("b,b->b", termination_probs.detach(), meta_entropy)
@@ -481,7 +483,9 @@ class PPOOC(OnPolicyAlgorithm):
                 action_value_losses.append(value_loss.item())
 
                 if self.offpolicy_learning:
-                    raise NotImplementedError
+                    value_error = rollout_data.option_returns - meta_values
+                    weighted_value_error = torch.einsum("b,b->b", termination_probs.detach(), value_error)
+                    meta_value_loss = weighted_value_error.pow(2).mean()
                 else:
                     value_error = rollout_data.option_returns - meta_values
                     weighted_value_error = torch.einsum("b,b->b", termination_probs.detach(), value_error)
