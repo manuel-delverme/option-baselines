@@ -421,6 +421,7 @@ class PPOOC(OnPolicyAlgorithm):
 
         assert self.n_epochs > 0, "Not enough data to train on"
         # train for n_epochs epochs
+
         for epoch in range(self.n_batches):
             approx_kl_divs = []
             # Do a complete pass on the rollout buffer
@@ -471,13 +472,13 @@ class PPOOC(OnPolicyAlgorithm):
                 clip_fractions.append(clip_fraction)
 
                 if self.offpolicy_learning:
-                    controllable_meta_advantages = torch.einsum("b,b->b", termination_probs.detach(), meta_advantages)
-                    meta_entropy = torch.einsum("b,b->b", termination_probs.detach(), meta_entropy)
-                    meta_policy_loss = -(controllable_meta_advantages * meta_log_prob).mean()
+                    controllable_meta_advantages = meta_advantages
+                    controllable_meta_entropy = meta_entropy
                 else:
                     controllable_meta_advantages = torch.einsum("b,b->b", termination_probs.detach(), meta_advantages)
-                    meta_entropy = torch.einsum("b,b->b", termination_probs.detach(), meta_entropy)
-                    meta_policy_loss = -(controllable_meta_advantages * meta_log_prob).mean()
+                    controllable_meta_entropy = torch.einsum("b,b->b", termination_probs.detach(), meta_entropy)
+
+                meta_policy_loss = -(controllable_meta_advantages * meta_log_prob).mean()
 
                 value_loss = F.mse_loss(rollout_data.returns, action_values)
                 action_value_losses.append(value_loss.item())
@@ -492,7 +493,7 @@ class PPOOC(OnPolicyAlgorithm):
                     meta_value_loss = weighted_value_error.pow(2).mean()
 
                 # Entropy loss favor exploration, approximate entropy when no analytical form
-                meta_entropies = -meta_log_prob if meta_entropy is None else meta_entropy
+                meta_entropies = -meta_log_prob if controllable_meta_entropy is None else controllable_meta_entropy
                 entropies = -action_log_prob if entropy is None else entropy
 
                 meta_entropy_loss = -torch.mean(meta_entropies * self.meta_ent_coef)
@@ -543,8 +544,6 @@ class PPOOC(OnPolicyAlgorithm):
 
         self._n_updates += 1
 
-        meta_entropy = meta_entropy.mean().item()
-        option_entropy = entropy.mean().item()
         grad_means = {k: v.item() for k, v in grad_means.items()}
 
         metrics = {
@@ -553,15 +552,17 @@ class PPOOC(OnPolicyAlgorithm):
             "train/approx_kl": np.mean(approx_kl_divs),
             "train/clip_fraction": np.mean(clip_fractions),
             "option/entropy_coeff": self._ent_coef,
-            "option/entropy": option_entropy,
+            "option/entropy": entropy.mean().item(),
             "train/grad_norm": grad_norm,
             "train/policy_loss": policy_loss.item(),
             "train/value_loss": value_loss.item(),
             "train/advantages": advantages.mean().item(),
-            "meta_train/entropy": meta_entropy,
+            "meta_train/entropy": meta_entropy.mean().item(),
+            "meta_train/controllable_entropy": controllable_meta_entropy.mean().item(),
             "meta_train/policy_loss": meta_policy_loss.item(),
             "meta_train/value_loss": meta_value_loss.item(),
             "meta_train/advantages": meta_advantages.mean().item(),
+            "meta_train/controllable_advantages": controllable_meta_advantages.mean().item(),
             **{"grad_mean/" + k: v for k, v in grad_means.items()},
         }
         if hasattr(self.policy, "log_std"):
