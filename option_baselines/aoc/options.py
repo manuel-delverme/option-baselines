@@ -1,6 +1,7 @@
 import collections
 import copy
 import logging
+import math
 import os
 import sys
 import time
@@ -412,9 +413,7 @@ class PPOOC(OnPolicyAlgorithm):
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
 
-        entropy_losses = []
-        pg_losses, action_value_losses = [], []
-        clip_fractions = []
+        metrics_list = collections.defaultdict(list)
         continue_training = True
 
         self.n_batches = max((self.n_epochs * self.rollout_buffer.actions.size) // self.batch_size, 1)
@@ -423,7 +422,6 @@ class PPOOC(OnPolicyAlgorithm):
         # train for n_epochs epochs
 
         for epoch in range(self.n_batches):
-            approx_kl_divs = []
             # Do a complete pass on the rollout buffer
             for rollout_data in self.rollout_buffer.get(self.batch_size):
                 actions = rollout_data.actions
@@ -459,7 +457,6 @@ class PPOOC(OnPolicyAlgorithm):
                     meta_advantages = (meta_advantages - meta_advantages.mean()) / (meta_advantages.std() + 1e-8)
 
                 ratio = torch.exp(action_log_prob - rollout_data.old_log_prob)
-                # torch.exp(action_log_prob - rollout_data.old_log_prob) * advantages
                 policy_loss_1 = advantages * ratio
                 policy_loss_2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
                 policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
@@ -467,9 +464,7 @@ class PPOOC(OnPolicyAlgorithm):
                 # policy_loss = -(advantages * action_log_prob).mean()
                 meta_log_prob = torch.clamp(meta_log_prob, -10, 10)
 
-                pg_losses.append(policy_loss.item())
                 clip_fraction = torch.mean((torch.abs(ratio - 1) > self.clip_range).float()).item()
-                clip_fractions.append(clip_fraction)
 
                 if self.offpolicy_learning:
                     controllable_meta_advantages = meta_advantages
@@ -481,7 +476,6 @@ class PPOOC(OnPolicyAlgorithm):
                 meta_policy_loss = -(controllable_meta_advantages * meta_log_prob).mean()
 
                 value_loss = F.mse_loss(rollout_data.returns, action_values)
-                action_value_losses.append(value_loss.item())
 
                 if self.offpolicy_learning:
                     value_error = rollout_data.option_returns - meta_values
@@ -500,76 +494,84 @@ class PPOOC(OnPolicyAlgorithm):
                 entropy_loss = -torch.mean(entropies * self._ent_coef)
 
                 # Option loss
-                loss = self.loss_fn(locals(), globals())
+                loss, loss_metrics = self.loss_fn(locals(), globals())
 
-                # Calculate approximate form of reverse KL Divergence for early stopping
-                # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
-                # and discussion in PR #419: https://github.com/DLR-RM/stable-baselines3/pull/419
-                # and Schulman blog: http://joschu.net/blog/kl-approx.html
                 with torch.no_grad():
                     log_ratio = action_log_prob - rollout_data.old_log_prob
-                    approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
-                    approx_kl_divs.append(approx_kl_div)
+                    approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio).cpu().item()
 
-                # Optimization step
                 self.policy.optimizer.zero_grad()
                 loss.backward()
 
-                # Clip grad norm
-                grad_means = {}
-                gradz = []
-                with torch.no_grad():
-                    for k, v in self.policy.named_children():
-                        child_grads = [(g.detach().abs().mean(), f"{k}.{kj}") for kj, g in v.named_parameters() if
-                                       g.grad is not None]
-                        if not child_grads:
-                            continue
+                grad_means, grad_norm = self.grad_update()
 
-                        gradz.extend(child_grads)
-                        grads = [g.item() for g, _ in child_grads]
-                        grad_means[k] = torch.mean(torch.tensor(grads))
-
-                    if any([torch.isnan(v) for v in grad_means.values()]):
-                        print("grad_mean is nan")
-                        raise ValueError("grad_mean is nan")
-
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-                assert not list(self.policy.parameters(recurse=False)), "Found parameters not in any child module"
+                new_metrics = {
+                    'advantages': advantages.mean().item(),
+                    'meta_advantages': meta_advantages.mean().item(),
+                    'pg_losses': policy_loss.item(),
+                    'clip_fractions': clip_fraction,
+                    'meta_entropies': meta_entropy.mean().item(),
+                    'controllable_meta_entropies': controllable_meta_entropy.mean().item(),
+                    'controllable_meta_advantages': controllable_meta_advantages.mean().item(),
+                    'meta_policy_losses': meta_policy_loss.item(),
+                    'value_losses': value_loss.item(),
+                    'entropies': entropies.mean().item(),
+                    'approx_kl_divs': approx_kl_div,
+                    'grad_norms': grad_norm,
+                    'grad_means': grad_means,
+                }
+                for k, v in (new_metrics | loss_metrics).items():
+                    metrics_list[k].append(v)
 
                 self.policy.optimizer.step()
 
         self._n_updates += self.n_epochs
-        explained_var = sb3_utils.explained_variance(self.rollout_buffer.values.flatten(),
-                                                     self.rollout_buffer.returns.flatten())
+        grad_means = collections.defaultdict(float)
+        for element in metrics_list['grad_means']:
+            for k, v in element.items():
+                grad_means[k] += (v / len(metrics_list['grad_means']))
+        del metrics_list['grad_means']
 
-        self._n_updates += 1
+        metrics = {}
+        expected_length = len(next(iter(metrics_list.values())))
+        for k, v in metrics_list.items():
+            if len(v) != expected_length:
+                raise ValueError(f"Expected length {expected_length} for {k}, got {len(v)}")
+            metrics[k] = np.mean(v)
 
-        grad_means = {k: v.item() for k, v in grad_means.items()}
-
-        metrics = {
-            "train/policy_gradient_loss": np.mean(pg_losses),
-            "train/action_value_loss": np.mean(action_value_losses),
-            "train/approx_kl": np.mean(approx_kl_divs),
-            "train/clip_fraction": np.mean(clip_fractions),
+        metrics_list = {
             "option/entropy_coeff": self._ent_coef,
-            "option/entropy": entropy.mean().item(),
-            "train/grad_norm": grad_norm,
-            "train/policy_loss": policy_loss.item(),
-            "train/value_loss": value_loss.item(),
-            "train/advantages": advantages.mean().item(),
-            "meta_train/entropy": meta_entropy.mean().item(),
-            "meta_train/controllable_entropy": controllable_meta_entropy.mean().item(),
-            "meta_train/policy_loss": meta_policy_loss.item(),
-            "meta_train/value_loss": meta_value_loss.item(),
-            "meta_train/advantages": meta_advantages.mean().item(),
-            "meta_train/controllable_advantages": controllable_meta_advantages.mean().item(),
+            **metrics,
             **{"grad_mean/" + k: v for k, v in grad_means.items()},
         }
         if hasattr(self.policy, "log_std"):
-            metrics["train/std"] = torch.exp(self.policy.log_std).mean().item()
-        self.logger.log(metrics, commit=False)
+            metrics_list["train/std"] = torch.exp(self.policy.log_std).mean().item()
+        self.logger.log(metrics_list, commit=False)
 
-    def loss_fn(self, locals_, globals_) -> torch.Tensor:
+    def grad_update(self):
+        # Clip grad norm
+        grad_means = {}
+        gradz = []
+        with torch.no_grad():
+            for k, v in self.policy.named_children():
+                child_grads = [
+                    (g.detach().abs().mean(), f"{k}.{kj}") for kj, g in v.named_parameters() if g.grad is not None]
+                if not child_grads:
+                    continue
+
+                gradz.extend(child_grads)
+                grads = [g.item() for g, _ in child_grads]
+                grad_means[k] = torch.mean(torch.tensor(grads)).item()
+
+            if any([math.isnan(v) for v in grad_means.values()]):
+                print("grad_mean is nan")
+                raise ValueError("grad_mean is nan")
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm).item()
+        assert not list(self.policy.parameters(recurse=False)), "Found parameters not in any child module"
+        return grad_means, grad_norm
+
+    def loss_fn(self, locals_, globals_) -> Tuple[torch.Tensor, Dict[str, float]]:
+        loss_metrics = {}
         loss = torch.tensor(0, dtype=torch.float32)
         loss += locals_["policy_loss"]
         loss += locals_["meta_policy_loss"]
@@ -577,13 +579,19 @@ class PPOOC(OnPolicyAlgorithm):
         loss += self.vf_coef * locals_["meta_value_loss"]
         loss += locals_["entropy_loss"]
         loss += locals_["meta_entropy_loss"]
-        loss += self.termination_loss(locals_, globals_)
-        loss += self.auxiliary_loss(locals_, globals_)
+        termination_loss, termination_metrics = self.termination_loss(locals_, globals_)
+        loss += termination_loss
+        loss_metrics.update(termination_metrics)
+
+        auxiliary_loss, auxiliary_metrics = self.auxiliary_loss(locals_, globals_)
+        loss += auxiliary_loss
+        loss_metrics.update(auxiliary_metrics)
+
         # TODO: remove termination and auxiliary loss function
-        return loss
+        return loss, loss_metrics
 
     def auxiliary_loss(self, locals_, globals_):
-        return 0.0
+        return 0.0, {}
 
     def termination_loss(self, locals_, _globals):
         meta_advantages = locals_["meta_advantages"]
@@ -641,8 +649,7 @@ class PPOOC(OnPolicyAlgorithm):
             termination_metrics["termination/kl"] = termination_kl_loss.item()
             loss += termination_kl_loss * self.termination_kl_weight
 
-        self.logger.log(termination_metrics, commit=False)
-        return loss
+        return loss, termination_metrics
 
 
 class OptimizerGroup:
@@ -923,92 +930,6 @@ def get_option_mask(observation: torch.Tensor, option: torch.Tensor, option_idx:
     else:
         option_observation = observation[option_mask]
     return option_mask, option_observation
-
-
-# class InitializationOC(KLTerminationOptionCritic):
-#     def __init__(self, *args, **kwargs):
-#         # self.initiation_class: Type[BoostedInitiation] = kwargs.pop("initialization_class")
-#         self.initiation_kwargs = kwargs.pop("initialization_kwargs")
-#
-#         # TODO: this should happen inside the meta policy, wtf
-#
-#         super().__init__(*args, **kwargs)
-#         self.policy.meta_policy_class.initialization = extras.initialization.BoostedInitiation(
-#             self.observation_space,
-#             **self.initiation_kwargs,
-#         ).to(self.device)
-#         assert hasattr(self.policy.meta_policy_class,
-#                        "initialization"), "The meta policy must have an initialization function"
-#
-#     def termination_loss(self, locals_, globals_):
-#         loss = super().termination_loss(locals_, globals_)
-#         loss += self.initialization_loss(locals_, globals_)
-#         return loss
-#
-#     def initialization_loss(self, locals_, _globals):
-#         # Q(s, o) > V(s')
-#         observations = locals_["observations"]
-#         meta_advantages = locals_["meta_advantages"]
-#         previous_options = locals_["previous_options"]
-#         _, unavailable_prob = self.policy.meta_policy_class.initialization(observations, previous_options)
-#         available_prob = 1 - unavailable_prob
-#         init_loss = ((self.initiation_margin + meta_advantages) * available_prob).mean()
-#
-#         self.logger.add_histogram("train/avail_onpolicy", available_prob.detach().numpy().squeeze())
-#         self.logger.record("train/avail_onpolicy_mean", available_prob.mean())
-#
-#         _, unavailable_prob = self.policy.meta_policy_class.initialization.forward_offpolicy(observations)
-#         change_points = locals_["previous_options"] != locals_["current_options"]
-#         if change_points.any():
-#             unavailable_prob[change_points] = 0
-#             available_prob = 1 - unavailable_prob
-#             self.logger.add_histogram("train/avail_meta", available_prob.detach().numpy().squeeze())
-#             self.logger.record("train/avail_meta_mean", available_prob.mean())
-#
-#         return init_loss
-
-
-# class InitializationOC(KLTerminationOptionCritic):
-#     # def __init__(self, *args, **kwargs):
-#     #     self.initiation_class: Type[BoostedInitiation] = kwargs.pop("initialization_class")
-#     #     self.initiation_kwargs = kwargs.pop("initialization_kwargs")
-#     #     # initialization_class
-#
-#     #     super().__init__(*args, **kwargs)
-#     #     # # TODO: this should happen inside the meta policy, wtf
-#     #     # self.policy.meta_policy.initialization = extras.initialization.BoostedInitiation(
-#     #     #     self.observation_space,
-#     #     #     **self.initiation_kwargs,
-#     #     # ).to(self.device)
-#     #     # assert hasattr(self.policy.meta_policy,
-#     #     #                "initialization"), "The meta policy must have an initialization function"
-#
-#     def termination_loss(self, locals_, globals_):
-#         loss = super().termination_loss(locals_, globals_)
-#         loss += self.initialization_loss(locals_, globals_)
-#         return loss
-#
-#     def initialization_loss(self, locals_, _globals):
-#         # Q(s, o) > V(s')
-#         observations = locals_["observations"]
-#         meta_advantages = locals_["meta_advantages"]
-#         previous_options = locals_["previous_options"]
-#         _, unavailable_prob = self.policy.meta_policy.initialization(observations, previous_options)
-#         available_prob = 1 - unavailable_prob
-#         init_loss = ((self.initiation_margin + meta_advantages) * available_prob).mean()
-#
-#         self.logger.add_histogram("train/avail_onpolicy", available_prob.detach().numpy().squeeze())
-#         self.logger.record("train/avail_onpolicy_mean", available_prob.mean())
-#
-#         _, unavailable_prob = self.policy.meta_policy.initialization.forward_offpolicy(observations)
-#         change_points = locals_["previous_options"] != locals_["current_options"]
-#         if change_points.any():
-#             unavailable_prob[change_points] = 0
-#             available_prob = 1 - unavailable_prob
-#             self.logger.add_histogram("train/avail_meta", available_prob.detach().numpy().squeeze())
-#             self.logger.record("train/avail_meta_mean", available_prob.mean())
-#
-#         return init_loss
 
 
 class StatefulMetaActorCriticPolicy(MetaAC):
