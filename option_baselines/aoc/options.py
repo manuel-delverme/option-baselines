@@ -535,8 +535,6 @@ class PPOOC(OnPolicyAlgorithm):
         metrics = {}
         expected_length = len(next(iter(metrics_list.values())))
         for k, v in metrics_list.items():
-            if len(v) != expected_length:
-                raise ValueError(f"Expected length {expected_length} for {k}, got {len(v)}")
             metrics[k] = np.mean(v)
 
         metrics_list = {
