@@ -506,19 +506,20 @@ class PPOOC(OnPolicyAlgorithm):
                 grad_means, grad_norm = self.grad_update()
 
                 new_metrics = {
-                    'advantages': advantages.mean().item(),
-                    'meta_advantages': meta_advantages.mean().item(),
-                    'pg_losses': policy_loss.item(),
-                    'clip_fractions': clip_fraction,
-                    'meta_entropies': meta_entropy.mean().item(),
-                    'controllable_meta_entropies': controllable_meta_entropy.mean().item(),
-                    'controllable_meta_advantages': controllable_meta_advantages.mean().item(),
-                    'meta_policy_losses': meta_policy_loss.item(),
-                    'value_losses': value_loss.item(),
-                    'entropies': entropies.mean().item(),
-                    'approx_kl_divs': approx_kl_div,
-                    'grad_norms': grad_norm,
-                    'grad_means': grad_means,
+                    'meta_train/advantages': advantages.mean().item(),
+                    'meta_train/meta_advantages': meta_advantages.mean().item(),
+                    'meta_train/entropy': meta_entropy.mean().item(),
+                    'meta_train/controllable_meta_entropies': controllable_meta_entropy.mean().item(),
+                    'meta_train/controllable_meta_advantages': controllable_meta_advantages.mean().item(),
+                    'meta_train/policy_loss': meta_policy_loss.item(),
+
+                    'train/pg_losses': policy_loss.item(),
+                    'train/clip_fractions': clip_fraction,
+                    'train/value_losses': value_loss.item(),
+                    'train/entropy': entropies.mean().item(),
+                    'train/approx_kl_divs': approx_kl_div,
+                    'train/grad_norms': grad_norm,
+                    'train/grad_means': grad_means,
                 }
                 for k, v in (new_metrics | loss_metrics).items():
                     metrics_list[k].append(v)
@@ -527,10 +528,10 @@ class PPOOC(OnPolicyAlgorithm):
 
         self._n_updates += self.n_epochs
         grad_means = collections.defaultdict(float)
-        for element in metrics_list['grad_means']:
+        for element in metrics_list['train/grad_means']:
             for k, v in element.items():
-                grad_means[k] += (v / len(metrics_list['grad_means']))
-        del metrics_list['grad_means']
+                grad_means[k] += (v / len(metrics_list['train/grad_means']))
+        del metrics_list['train/grad_means']
 
         metrics = {}
         expected_length = len(next(iter(metrics_list.values())))
