@@ -188,21 +188,22 @@ class OptionEvalCallback(EvalCallback):
             self.evaluations_results.append(deterministic_episode_rewards)
             self.evaluations_length.append(deterministic_episode_lengths)
 
-        mean_reward, std_reward = np.mean(deterministic_episode_rewards), np.std(deterministic_episode_rewards)
-        mean_ep_length, std_ep_length = np.mean(deterministic_episode_lengths), np.std(deterministic_episode_lengths)
-        self.last_mean_reward = mean_reward
+        deterministic_mean_reward, std_reward = np.mean(deterministic_episode_rewards), np.std(deterministic_episode_rewards)
+        deterministic_mean_ep_length, std_ep_length = np.mean(deterministic_episode_lengths), np.std(deterministic_episode_lengths)
 
         if self.verbose > 0:
-            logging.info(f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
-            logging.info(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
+            logging.info(f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={deterministic_mean_reward:.2f} +/- {std_reward:.2f}")
+            logging.info(f"Episode length: {deterministic_mean_ep_length:.2f} +/- {std_ep_length:.2f}")
 
         option_eval_metrics = {
-            "deterministic_eval/mean_reward": float(mean_reward),
-            "deterministic_eval/mean_ep_length": float(mean_ep_length),
+            "deterministic_eval/mean_reward": float(deterministic_mean_reward),
+            "deterministic_eval/mean_ep_length": float(deterministic_mean_ep_length),
             "stochastic_eval/mean_reward": float(np.mean(stochastic_episode_rewards)),
             "stochastic_eval/mean_ep_length": float(np.mean(stochastic_episode_lengths)),
         }
 
+        mean_reward = max(deterministic_mean_reward, stochastic_episode_rewards)
+        self.last_mean_reward = mean_reward
         if len(self._is_success_buffer) > 0:
             success_rate = np.mean(self._is_success_buffer)
             if self.verbose > 0:
@@ -220,6 +221,8 @@ class OptionEvalCallback(EvalCallback):
             # Trigger callback on new best model, if needed
             if self.callback_on_new_best is not None:
                 continue_training = self.callback_on_new_best.on_step()
+
+        option_eval_metrics["eval/best_mean_reward"] = self.best_mean_reward
 
         # Trigger callback after every evaluation, if needed
         if self.callback is not None:
