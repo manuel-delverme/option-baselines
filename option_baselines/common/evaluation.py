@@ -191,6 +191,9 @@ class OptionEvalCallback(EvalCallback):
         deterministic_mean_reward, std_reward = np.mean(deterministic_episode_rewards), np.std(deterministic_episode_rewards)
         deterministic_mean_ep_length, std_ep_length = np.mean(deterministic_episode_lengths), np.std(deterministic_episode_lengths)
 
+        stochastic_mean_reward = np.mean(stochastic_episode_rewards)
+        stochastic_mean_ep_length = np.mean(stochastic_episode_lengths)
+
         if self.verbose > 0:
             logging.info(f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={deterministic_mean_reward:.2f} +/- {std_reward:.2f}")
             logging.info(f"Episode length: {deterministic_mean_ep_length:.2f} +/- {std_ep_length:.2f}")
@@ -198,11 +201,11 @@ class OptionEvalCallback(EvalCallback):
         option_eval_metrics = {
             "deterministic_eval/mean_reward": float(deterministic_mean_reward),
             "deterministic_eval/mean_ep_length": float(deterministic_mean_ep_length),
-            "stochastic_eval/mean_reward": float(np.mean(stochastic_episode_rewards)),
-            "stochastic_eval/mean_ep_length": float(np.mean(stochastic_episode_lengths)),
+            "stochastic_eval/mean_reward": float(stochastic_mean_reward),
+            "stochastic_eval/mean_ep_length": float(stochastic_mean_ep_length),
         }
 
-        mean_reward = max(deterministic_mean_reward, stochastic_episode_rewards)
+        mean_reward = max(deterministic_mean_reward, stochastic_mean_reward)
         self.last_mean_reward = mean_reward
         if len(self._is_success_buffer) > 0:
             success_rate = np.mean(self._is_success_buffer)
