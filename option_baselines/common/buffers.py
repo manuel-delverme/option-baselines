@@ -106,8 +106,8 @@ class DictOptionRolloutBuffer(buffers.DictRolloutBuffer):
         self.current_options[self.pos] = current_option.cpu().numpy().copy()
 
         self.meta_values[self.pos] = meta_value.clone().cpu().numpy().flatten()
-        self.option_log_probs[self.pos] = option_log_prob.clone().cpu().numpy().squeeze()
-        self.option_available[self.pos] = option_available.clone().cpu().numpy().squeeze()
+        self.option_log_probs[self.pos] = option_log_prob.clone().cpu().numpy()  # .squeeze()
+        self.option_available[self.pos] = option_available.clone().cpu().numpy()  # .squeeze()
         super().add(obs, action, reward, episode_start, value, log_prob)
 
     def get(self, batch_size: Optional[int] = None) -> Generator[OptionsRolloutBufferSamples, None, None]:
